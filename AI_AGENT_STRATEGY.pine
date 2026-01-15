@@ -1,0 +1,503 @@
+//@version=6
+
+//  -----------------------------------------------------------------------------
+//  Copyright © 2025 AI Trading Agent. All rights reserved.
+//  -----------------------------------------------------------------------------
+//
+//  Title:    AI Agent Trading Strategy [PineScript]
+//  Version:  v1.0
+//  Release:  January 31, 2025
+//
+//  This script implements the AI Agent's LLM Trend Strategy logic:
+//    • EMA Crossover entries (momentum shifts)
+//    • RSI Pullback/Retracement filters
+//    • MACD Crossover confirmation
+//    • Volume confirmation
+//    • ATR-based stop loss placement
+//    • Multi-timeframe analysis (5m + 4h)
+//    • Single-entry/single-exit logic with intrabar SL/TP
+//    • Comprehensive backtesting statistics
+//
+//  Usage:
+//    1) Configure indicator periods and thresholds in the input groups
+//    2) Set risk management parameters (TP/SL)
+//    3) Enable/disable entry and exit conditions as needed
+//    4) Create TradingView alerts for "Entry Alert" and "Close Alert"
+//    5) The script shows entry/exit markers, SL/TP lines, and performance stats
+//
+//  Disclaimer:
+//    Use at your own risk. Past performance is not necessarily indicative of future results.
+//
+//  -----------------------------------------------------------------------------
+
+strategy(
+ title            = "AI Agent Trading Strategy",
+ shorttitle       = "AI Agent Strategy",
+ overlay          = true,
+ initial_capital  = 10000,
+ default_qty_type = strategy.percent_of_equity,
+ default_qty_value = 100,
+ commission_type = strategy.commission.percent,
+ commission_value = 0.1,
+ max_labels_count = 500,
+ max_bars_back    = 500
+ )
+
+// ──────────────────────────────────────────────────────────────────────────
+// (1) TIME FILTER (Start/End Date)
+// ──────────────────────────────────────────────────────────────────────────
+timeGroup       = "🗓 Time Filter"
+startDate       = input.time(
+ title   = "Start Date/Time",
+ defval  = timestamp("2023-01-01T00:00:00"),
+ group   = timeGroup
+ )
+endDate         = input.time(
+ title   = "End Date/Time",
+ defval  = timestamp("2030-01-01T00:00:00"),
+ group   = timeGroup
+ )
+inTimeWindow    = (time >= startDate and time <= endDate)
+
+// ──────────────────────────────────────────────────────────────────────────
+// POSITION SIZING
+// ──────────────────────────────────────────────────────────────────────────
+positionSize = input.float(100.0, "Position Size (% of Equity)", minval=1.0, maxval=100.0, step=1.0, group="Risk Management")
+
+// ──────────────────────────────────────────────────────────────────────────
+// (2) INDICATOR SETTINGS
+// ──────────────────────────────────────────────────────────────────────────
+indicatorGroup = "📊 Indicator Settings"
+
+// EMA Settings
+emaFastLen = input.int(20, "Fast EMA Length", minval=1, group=indicatorGroup)
+emaSlowLen = input.int(50, "Slow EMA Length", minval=1, group=indicatorGroup)
+emaTf     = input.timeframe("", "EMA Timeframe Override", group=indicatorGroup)
+
+// RSI Settings
+rsiLen    = input.int(14, "RSI Length", minval=1, group=indicatorGroup)
+rsiTf     = input.timeframe("", "RSI Timeframe Override", group=indicatorGroup)
+rsiOversold = input.float(30, "RSI Oversold Level", minval=0, maxval=50, group=indicatorGroup)
+rsiOverbought = input.float(70, "RSI Overbought Level", minval=50, maxval=100, group=indicatorGroup)
+rsiNeutralMin = input.float(45, "RSI Neutral Min (Avoid Zone)", minval=0, maxval=50, group=indicatorGroup)
+rsiNeutralMax = input.float(55, "RSI Neutral Max (Avoid Zone)", minval=50, maxval=100, group=indicatorGroup)
+
+// MACD Settings
+macdFastLen = input.int(12, "MACD Fast Length", minval=1, group=indicatorGroup)
+macdSlowLen = input.int(26, "MACD Slow Length", minval=1, group=indicatorGroup)
+macdSigLen  = input.int(9, "MACD Signal Length", minval=1, group=indicatorGroup)
+macdTf      = input.timeframe("", "MACD Timeframe Override", group=indicatorGroup)
+
+// ATR Settings
+atrLen = input.int(14, "ATR Length", minval=1, group=indicatorGroup)
+atrMultiplier = input.float(1.5, "ATR Stop Loss Multiplier", minval=0.5, maxval=5.0, group=indicatorGroup)
+
+// Volume Settings
+volSmaLen = input.int(20, "Volume SMA Length", minval=1, group=indicatorGroup)
+volMultiplier = input.float(1.2, "Volume Surge Multiplier", minval=1.0, maxval=5.0, group=indicatorGroup)
+
+// Higher Timeframe (for trend confirmation)
+htfTf = input.timeframe("240", "Higher Timeframe for Trend Confirmation", group=indicatorGroup, tooltip="240 = 4 hours, 60 = 1 hour, 15 = 15 minutes")
+
+// ──────────────────────────────────────────────────────────────────────────
+// (3) ENTRY CONDITIONS
+// ──────────────────────────────────────────────────────────────────────────
+entryGroup = "🎛️ ENTRY CONDITIONS"
+
+// Enable/Disable Entry Conditions
+enableEMACrossEntry = input.bool(true, "🔸 Enable EMA Crossover Entry?", group=entryGroup)
+enableRSIPullbackEntry = input.bool(true, "🔸 Enable RSI Pullback Entry?", group=entryGroup)
+enableMACDCrossEntry = input.bool(true, "🔸 Enable MACD Crossover Entry?", group=entryGroup)
+enablePriceRetraceEntry = input.bool(true, "🔸 Enable Price Retracement Entry?", group=entryGroup)
+enableVolumeConfirm = input.bool(true, "🔸 Enable Volume Confirmation?", group=entryGroup)
+enableHTFTrend = input.bool(true, "🔸 Enable Higher Timeframe Trend Filter?", group=entryGroup)
+
+// Entry Mode: Require ALL conditions or ANY condition (AI Agent uses ANY with min 2 signals)
+entryMode = input.string("ANY", "Entry Mode", options=["ALL", "ANY"], group=entryGroup, tooltip="ALL = all enabled conditions must be true, ANY = at least N must be true (AI Agent uses ANY with 2+)")
+
+// Minimum signals required (for ANY mode) - AI Agent requires at least 2 signals
+minSignalsRequired = input.int(2, "Minimum Signals Required (ANY mode)", minval=1, maxval=6, group=entryGroup, tooltip="AI Agent requires at least 2 of: EMA cross, RSI pullback, MACD cross, Price retrace. Lower = more trades")
+
+// Quick Test Mode - reduces requirements for testing
+quickTestMode = input.bool(false, "🔧 Quick Test Mode (Lower Requirements)", group=entryGroup, tooltip="Enable to reduce signal requirements for testing - requires only 1 signal instead of 2")
+
+// ──────────────────────────────────────────────────────────────────────────
+// (4) CLOSE CONDITIONS
+// ──────────────────────────────────────────────────────────────────────────
+closeGroup = "🏁 CLOSE CONDITIONS"
+
+// Take Profit & Stop Loss
+takeProfitPerc  = input.float(0.0, "💰 Take Profit (+%) (0=disabled)", group=closeGroup, minval=0.0)
+stopLossPerc    = input.float(0.0, "🛑 Stop Loss (-%) (0=disabled, uses ATR if enabled)", group=closeGroup, maxval=0.0)
+
+// Use ATR-based stop loss
+useATRStop = input.bool(true, "🔸 Use ATR-based Stop Loss?", group=closeGroup)
+
+// Exit Conditions
+enableRSIExit = input.bool(true, "🔸 Enable RSI Exit?", group=closeGroup)
+rsiExitLong = input.float(70, "RSI Exit Level (Long)", minval=50, maxval=100, group=closeGroup)
+rsiExitShort = input.float(30, "RSI Exit Level (Short)", minval=0, maxval=50, group=closeGroup)
+
+enableMACDExit = input.bool(true, "🔸 Enable MACD Crossover Exit?", group=closeGroup)
+
+enableEMAExit = input.bool(true, "🔸 Enable EMA Crossover Exit?", group=closeGroup)
+
+// ──────────────────────────────────────────────────────────────────────────
+// CALCULATE INDICATORS
+// ──────────────────────────────────────────────────────────────────────────
+
+// EMA Calculations
+emaFast = request.security(syminfo.tickerid, (emaTf == "" ? timeframe.period : emaTf), ta.ema(close, emaFastLen), lookahead=barmerge.lookahead_off)
+emaSlow = request.security(syminfo.tickerid, (emaTf == "" ? timeframe.period : emaTf), ta.ema(close, emaSlowLen), lookahead=barmerge.lookahead_off)
+
+// RSI Calculation
+rsi = request.security(syminfo.tickerid, (rsiTf == "" ? timeframe.period : rsiTf), ta.rsi(close, rsiLen), lookahead=barmerge.lookahead_off)
+
+// MACD Calculation
+[macdLine, macdSignal, macdHist] = ta.macd(close, macdFastLen, macdSlowLen, macdSigLen)
+macdLineHTF = request.security(syminfo.tickerid, (macdTf == "" ? timeframe.period : macdTf), macdLine, lookahead=barmerge.lookahead_off)
+macdSignalHTF = request.security(syminfo.tickerid, (macdTf == "" ? timeframe.period : macdTf), macdSignal, lookahead=barmerge.lookahead_off)
+
+// ATR Calculation
+atr = ta.atr(atrLen)
+
+// Volume Calculation
+volSma = ta.sma(volume, volSmaLen)
+volumeSurge = not na(volume) and not na(volSma) and volume > 0 and volSma > 0 and volume > (volSma * volMultiplier)
+
+// Higher Timeframe Trend
+htfEmaFast = request.security(syminfo.tickerid, htfTf, ta.ema(close, emaFastLen), lookahead=barmerge.lookahead_off)
+htfEmaSlow = request.security(syminfo.tickerid, htfTf, ta.ema(close, emaSlowLen), lookahead=barmerge.lookahead_off)
+htfTrendBullish = not na(htfEmaFast) and not na(htfEmaSlow) and htfEmaFast > htfEmaSlow
+htfTrendBearish = not na(htfEmaFast) and not na(htfEmaSlow) and htfEmaFast < htfEmaSlow
+
+// ──────────────────────────────────────────────────────────────────────────
+// ENTRY SIGNAL LOGIC
+// ──────────────────────────────────────────────────────────────────────────
+
+// EMA Crossover Signals
+emaCrossAbove = not na(emaFast) and not na(emaSlow) and ta.crossover(emaFast, emaSlow)
+emaCrossBelow = not na(emaFast) and not na(emaSlow) and ta.crossunder(emaFast, emaSlow)
+emaFastAboveSlow = not na(emaFast) and not na(emaSlow) and emaFast > emaSlow
+emaFastBelowSlow = not na(emaFast) and not na(emaSlow) and emaFast < emaSlow
+
+// Price Retracement: Price pulled back to EMA then bounced (more lenient)
+priceNearEMA = not na(emaFast) and not na(close) and math.abs(close - emaFast) / close < 0.03  // Within 3% of EMA (more lenient)
+priceBouncedFromEMA = not na(emaFast) and not na(emaFast[1]) and ((close > emaFast and close[1] <= emaFast[1]) or (close < emaFast and close[1] >= emaFast[1]))
+// Also allow if price is near EMA and trending in direction
+priceRetraceLong = not na(emaFast) and not na(close) and ((priceNearEMA and priceBouncedFromEMA and close > emaFast) or (close > emaFast and math.abs(close - emaFast) / close < 0.01))
+priceRetraceShort = not na(emaFast) and not na(close) and ((priceNearEMA and priceBouncedFromEMA and close < emaFast) or (close < emaFast and math.abs(close - emaFast) / close < 0.01))
+
+// RSI Pullback Signals (more lenient - allow RSI < 50 for longs, > 50 for shorts)
+rsiPullbackLong = not na(rsi) and rsi < 50  // RSI < 50 for longs (not overbought)
+rsiPullbackShort = not na(rsi) and rsi > 50  // RSI > 50 for shorts (not oversold)
+rsiAvoidZone = not na(rsi) and rsi >= rsiNeutralMin and rsi <= rsiNeutralMax  // Avoid neutral zone (45-55)
+
+// MACD Crossover Signals
+macdCrossAbove = not na(macdLineHTF) and not na(macdSignalHTF) and ta.crossover(macdLineHTF, macdSignalHTF)
+macdCrossBelow = not na(macdLineHTF) and not na(macdSignalHTF) and ta.crossunder(macdLineHTF, macdSignalHTF)
+
+// LONG Entry Signals
+longEMACross = enableEMACrossEntry ? (emaCrossAbove or (not na(emaFast) and not na(emaSlow) and not na(emaFast[1]) and not na(emaSlow[1]) and emaFast > emaSlow and emaFast[1] <= emaSlow[1])) : false
+longRSIPullback = enableRSIPullbackEntry ? (rsiPullbackLong and not rsiAvoidZone) : false
+longMACDCross = enableMACDCrossEntry ? (macdCrossAbove or (not na(macdLineHTF) and not na(macdSignalHTF) and not na(macdLineHTF[1]) and not na(macdSignalHTF[1]) and macdLineHTF > macdSignalHTF and macdLineHTF[1] <= macdSignalHTF[1])) : false
+longPriceRetrace = enablePriceRetraceEntry ? (not na(emaFast) and priceRetraceLong) : false
+longVolume = enableVolumeConfirm ? volumeSurge : true  // If disabled, always true
+longHTFTrend = enableHTFTrend ? htfTrendBullish : true  // If disabled, always true
+
+// SHORT Entry Signals
+shortEMACross = enableEMACrossEntry ? (emaCrossBelow or (not na(emaFast) and not na(emaSlow) and not na(emaFast[1]) and not na(emaSlow[1]) and emaFast < emaSlow and emaFast[1] >= emaSlow[1])) : false
+shortRSIPullback = enableRSIPullbackEntry ? (rsiPullbackShort and not rsiAvoidZone) : false
+shortMACDCross = enableMACDCrossEntry ? (macdCrossBelow or (not na(macdLineHTF) and not na(macdSignalHTF) and not na(macdLineHTF[1]) and not na(macdSignalHTF[1]) and macdLineHTF < macdSignalHTF and macdLineHTF[1] >= macdSignalHTF[1])) : false
+shortPriceRetrace = enablePriceRetraceEntry ? (not na(emaFast) and priceRetraceShort) : false
+shortVolume = enableVolumeConfirm ? volumeSurge : true
+shortHTFTrend = enableHTFTrend ? htfTrendBearish : true
+
+// Helper function to count true signals
+f_countTrueSignals(_signals) =>
+    int count = 0
+    for i = 0 to array.size(_signals) - 1
+        if array.get(_signals, i)
+            count += 1
+    count
+
+// LONG Entry Condition
+longSignals = array.new_bool()
+array.push(longSignals, longEMACross)
+array.push(longSignals, longRSIPullback)
+array.push(longSignals, longMACDCross)
+array.push(longSignals, longPriceRetrace)
+array.push(longSignals, longVolume)
+array.push(longSignals, longHTFTrend)
+
+bool longEntry = false
+if entryMode == "ALL"
+    // All enabled signals must be true
+    longEntry := not array.includes(longSignals, false)
+else  // ANY mode
+    // At least minSignalsRequired must be true (or 1 if quick test mode)
+    int trueCount = f_countTrueSignals(longSignals)
+    int required = quickTestMode ? 1 : minSignalsRequired
+    longEntry := trueCount >= required
+
+// SHORT Entry Condition
+shortSignals = array.new_bool()
+array.push(shortSignals, shortEMACross)
+array.push(shortSignals, shortRSIPullback)
+array.push(shortSignals, shortMACDCross)
+array.push(shortSignals, shortPriceRetrace)
+array.push(shortSignals, shortVolume)
+array.push(shortSignals, shortHTFTrend)
+
+bool shortEntry = false
+if entryMode == "ALL"
+    shortEntry := not array.includes(shortSignals, false)
+else  // ANY mode
+    int trueCount = f_countTrueSignals(shortSignals)
+    int required = quickTestMode ? 1 : minSignalsRequired
+    shortEntry := trueCount >= required
+
+// Final Entry Signals (only when not in trade)
+bool longEntrySignal = strategy.position_size == 0 and longEntry
+bool shortEntrySignal = strategy.position_size == 0 and shortEntry
+
+// ──────────────────────────────────────────────────────────────────────────
+// EXIT SIGNAL LOGIC
+// ──────────────────────────────────────────────────────────────────────────
+
+// Exit conditions (only check when in trade)
+bool inLongPosition = strategy.position_size > 0
+bool inShortPosition = strategy.position_size < 0
+
+bool longExitRSI = enableRSIExit and inLongPosition and not na(rsi) and rsi >= rsiExitLong
+bool longExitMACD = enableMACDExit and inLongPosition and macdCrossBelow
+bool longExitEMA = enableEMAExit and inLongPosition and emaCrossBelow
+
+bool shortExitRSI = enableRSIExit and inShortPosition and not na(rsi) and rsi <= rsiExitShort
+bool shortExitMACD = enableMACDExit and inShortPosition and macdCrossAbove
+bool shortExitEMA = enableEMAExit and inShortPosition and emaCrossAbove
+
+// Combine exit signals (ANY exit condition triggers close)
+bool longExit = longExitRSI or longExitMACD or longExitEMA
+bool shortExit = shortExitRSI or shortExitMACD or shortExitEMA
+bool closeSignal = (inLongPosition and longExit) or (inShortPosition and shortExit)
+
+// ──────────────────────────────────────────────────────────────────────────
+// ENTRY / EXIT LOGIC - STRATEGY EXECUTION
+// ──────────────────────────────────────────────────────────────────────────
+
+// Calculate SL/TP prices
+f_calcSLTP(_ent, _dir) =>
+    float sPrice = na
+    float tPrice = na
+    
+    // Use ATR-based stop if enabled, otherwise use percentage
+    if useATRStop and not na(atr) and atr > 0
+        if _dir == "long"
+            sPrice := _ent - (atr * atrMultiplier)
+        else
+            sPrice := _ent + (atr * atrMultiplier)
+    else if stopLossPerc < 0
+        sPrice := _ent * (1.0 + stopLossPerc / 100.0)
+    
+    if takeProfitPerc > 0
+        if _dir == "long"
+            tPrice := _ent * (1.0 + takeProfitPerc / 100.0)
+        else
+            tPrice := _ent * (1.0 - takeProfitPerc / 100.0)
+    
+    [sPrice, tPrice]
+
+// LONG ENTRY
+if inTimeWindow and longEntrySignal and strategy.position_size == 0
+    [slPrice, tpPrice] = f_calcSLTP(close, "long")
+    strategy.entry("Long", strategy.long, qty=positionSize, comment="AI Agent Long")
+    // Set exit with SL/TP if at least one is defined
+    if not na(slPrice) or not na(tpPrice)
+        strategy.exit("Exit Long", "Long", stop=slPrice, limit=tpPrice, comment="TP/SL")
+
+// SHORT ENTRY
+if inTimeWindow and shortEntrySignal and strategy.position_size == 0
+    [slPrice, tpPrice] = f_calcSLTP(close, "short")
+    strategy.entry("Short", strategy.short, qty=positionSize, comment="AI Agent Short")
+    // Set exit with SL/TP if at least one is defined
+    if not na(slPrice) or not na(tpPrice)
+        strategy.exit("Exit Short", "Short", stop=slPrice, limit=tpPrice, comment="TP/SL")
+
+// EXIT CONDITIONS (close position if exit signal triggered)
+if inTimeWindow and closeSignal
+    if strategy.position_size > 0
+        strategy.close("Long", comment="AI Agent Exit")
+    if strategy.position_size < 0
+        strategy.close("Short", comment="AI Agent Exit")
+
+// Alert conditions
+alertcondition(longEntrySignal or shortEntrySignal, title="Entry Alert", message="AI Agent Entry Signal")
+alertcondition(closeSignal, title="Close Alert", message="AI Agent Close Signal")
+
+// Plot EMAs
+plot(emaFast, color=color.new(#2ECD99,0), title="EMA Fast", linewidth=2)
+plot(emaSlow, color=color.new(#E74C3C,0), title="EMA Slow", linewidth=2)
+
+// ──────────────────────────────────────────────────────────────────────────
+// COMBINED STATISTICS LABEL (BACKTESTING)
+// ──────────────────────────────────────────────────────────────────────────
+
+SHOW_STATISTICS_LABEL = input.bool(
+ title  = "👀 Show Combined Statistics Label",
+ defval = true,
+ group  = "STATISTIC SETTINGS"
+ )
+
+STATS_LABEL_BACKGROUND_COLOR = input.color(
+ title  = "Stats Label BG Color",
+ defval = color.new(#434651, 0),
+ group  = "STATISTIC SETTINGS"
+ )
+
+STATS_LABEL_TEXT_COLOR = input.color(
+ title  = "Stats Label Text Color",
+ defval = color.new(#D1D4DC, 10),
+ group  = "STATISTIC SETTINGS"
+ )
+
+STATS_LABEL_TEXT_SIZE = input.string(
+ title   = "Stats Label Text Size",
+ defval  = "normal",
+ options = ["tiny", "small", "normal", "large", "huge"],
+ group   = "STATISTIC SETTINGS"
+ )
+
+var label statsLab = na
+
+// Build stats - calculate values in global scope
+int totalTrades = strategy.closedtrades
+int winTrades = strategy.wintrades
+int lossTrades = strategy.losstrades
+float winRate = totalTrades > 0 ? (winTrades * 100.0 / totalTrades) : 0.0
+float netProfit = strategy.netprofit
+float netProfitPct = strategy.netprofit / strategy.initial_capital * 100.0
+float avgWin = strategy.wintrades > 0 ? strategy.grossprofit / strategy.wintrades : 0.0
+float avgLoss = strategy.losstrades > 0 ? math.abs(strategy.grossloss / strategy.losstrades) : 0.0
+float profitFactor = strategy.grossloss != 0 ? strategy.grossprofit / math.abs(strategy.grossloss) : 0.0
+int openTrades = strategy.position_size != 0 ? 1 : 0
+
+string statsTxt = 
+   "AI AGENT STRATEGY - BACKTESTING STATISTICS\n"
+   + "==========================================\n"
+   + "Total Trades: "    + str.tostring(totalTrades)
+   + " (Open: "          + str.tostring(openTrades) + ")"
+   + "\nWins: "           + str.tostring(winTrades)
+   + "\nLosses: "         + str.tostring(lossTrades)
+   + "\nWin Rate: "      + str.tostring(winRate, format.mintick) + "%"
+   + "\n--------------------------------\n"
+   + "Net Profit: "      + str.tostring(netProfit, format.mintick) + " (" + str.tostring(netProfitPct, format.mintick) + "%)"
+   + "\nGross Profit: "  + str.tostring(strategy.grossprofit, format.mintick)
+   + "\nGross Loss: "    + str.tostring(strategy.grossloss, format.mintick)
+   + "\nProfit Factor: " + str.tostring(profitFactor, format.mintick)
+   + "\n--------------------------------\n"
+   + "Avg Win: "         + str.tostring(avgWin, format.mintick)
+   + "\nAvg Loss: "       + str.tostring(avgLoss, format.mintick)
+   + "\nMax Drawdown: "   + str.tostring(strategy.max_drawdown, format.mintick)
+   + "\nMax Drawdown %: " + str.tostring(strategy.max_drawdown_percent, format.mintick) + "%"
+   + "\n--------------------------------\n"
+   + "Total Bars: "     + str.tostring(bar_index + 1)
+
+if SHOW_STATISTICS_LABEL
+    // Delete old label each bar
+    label.delete(statsLab)
+    
+    // Determine label text size
+    label_size = switch STATS_LABEL_TEXT_SIZE
+        "tiny"   => size.tiny
+        "small"  => size.small
+        "normal" => size.normal
+        "large"  => size.large
+        "huge"   => size.huge
+        => size.normal
+    
+    // Place near the middle-right of the current bar
+    float statsY = (high + low) / 2.0
+    statsLab := label.new(
+     x        = bar_index + 1,
+     y        = statsY,
+     text     = statsTxt,
+     xloc     = xloc.bar_index,
+     yloc     = yloc.price,
+     color    = STATS_LABEL_BACKGROUND_COLOR,
+     style    = label.style_label_left,
+     textcolor= STATS_LABEL_TEXT_COLOR,
+     size     = label_size,
+     textalign= text.align_left
+     )
+
+// ──────────────────────────────────────────────────────────────────────────
+// CONDITION TABLE listing entry & close conditions
+// ──────────────────────────────────────────────────────────────────────────
+
+var table condTab = na
+var string[] entryTableArr = array.new_string()
+var string[] closeTableArr = array.new_string()
+
+if barstate.isnew
+    // Rebuild the table each bar so it updates if user changes inputs
+    if not na(condTab)
+        table.delete(condTab)
+    
+    array.clear(entryTableArr)
+    array.clear(closeTableArr)
+    
+    // Build entry conditions list
+    if enableEMACrossEntry
+        array.push(entryTableArr, "EMA Crossover")
+    if enableRSIPullbackEntry
+        array.push(entryTableArr, "RSI Pullback")
+    if enableMACDCrossEntry
+        array.push(entryTableArr, "MACD Crossover")
+    if enablePriceRetraceEntry
+        array.push(entryTableArr, "Price Retracement")
+    if enableVolumeConfirm
+        array.push(entryTableArr, "Volume Surge")
+    if enableHTFTrend
+        // Convert timeframe to readable format
+        htfDisplay = htfTf == "240" ? "4H" : htfTf == "60" ? "1H" : htfTf == "15" ? "15M" : htfTf == "5" ? "5M" : htfTf
+        array.push(entryTableArr, "HTF Trend (" + htfDisplay + ")")
+    
+    array.push(entryTableArr, "Entry Mode: " + entryMode)
+    if entryMode == "ANY"
+        array.push(entryTableArr, "Min Signals: " + str.tostring(minSignalsRequired))
+    
+    // Build close conditions list
+    if useATRStop
+        array.push(closeTableArr, "ATR Stop (" + str.tostring(atrMultiplier) + "x)")
+    if stopLossPerc < 0
+        array.push(closeTableArr, "Stop Loss " + str.tostring(stopLossPerc, format.mintick) + "%")
+    if takeProfitPerc > 0
+        array.push(closeTableArr, "Take Profit " + str.tostring(takeProfitPerc, format.mintick) + "%")
+    if enableRSIExit
+        array.push(closeTableArr, "RSI Exit (L:" + str.tostring(rsiExitLong) + " S:" + str.tostring(rsiExitShort) + ")")
+    if enableMACDExit
+        array.push(closeTableArr, "MACD Crossover Exit")
+    if enableEMAExit
+        array.push(closeTableArr, "EMA Crossover Exit")
+    
+    condTab := table.new(position.bottom_center, 2, 50, border_width=1, border_color=color.new(color.black,100))
+    
+    // Table header
+    table.cell(condTab, 0, 0, "🎛️ Entry conditions", text_color=color.white, bgcolor=color.new(#2A2E39,0), text_halign=text.align_center)
+    table.cell(condTab, 1, 0, "🏁 Close conditions", text_color=color.white, bgcolor=color.new(#2A2E39,0), text_halign=text.align_center)
+    
+    bool noEntry = (array.size(entryTableArr) == 0)
+    bool noClose = (array.size(closeTableArr) == 0)
+    
+    if noEntry and noClose
+        table.cell(condTab, 0, 1, "No indicators selected", text_color=color.white, bgcolor=color.new(#056757,0), text_halign=text.align_left)
+        table.cell(condTab, 1, 1, "No indicators selected", text_color=color.white, bgcolor=color.new(#B22932,0), text_halign=text.align_left)
+    else
+        int maxLn = math.max(array.size(entryTableArr), array.size(closeTableArr))
+        for i=0 to maxLn-1
+            string eTxt = i < array.size(entryTableArr) ? array.get(entryTableArr,i) : ""
+            string cTxt = i < array.size(closeTableArr) ? array.get(closeTableArr,i) : ""
+            table.cell(condTab, 0, i+1, eTxt, text_color=color.white, bgcolor=color.new(#056757,0), text_halign=text.align_left)
+            table.cell(condTab, 1, i+1, cTxt, text_color=color.white, bgcolor=color.new(#B22932,0), text_halign=text.align_left)
+

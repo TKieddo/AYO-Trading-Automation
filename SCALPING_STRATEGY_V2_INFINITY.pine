@@ -1,0 +1,360 @@
+//@version=6
+strategy("Scalping Strategy Signal v2 by INFINITYTRADER", shorttitle="SCALP V2 INF", overlay=true, initial_capital=100, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1)
+
+//
+// Scalping Strategy Signal v2 by INFINITYTRADER
+// Based on: https://www.tradingview.com/script/D898fmMY-Scalping-Strategy-Signal-v2-by-INFINITYTRADER/
+//
+// Description:
+//    Multi-timeframe scalping strategy that uses higher timeframe (default: 4H) 
+//    to generate entry/exit signals on lower timeframes (15m/30m).
+//    Combines moving averages, RSI, volume, ATR, and candlestick patterns.
+//    Features four distinct entry methods with re-entry logic and multiple exit conditions.
+//
+
+// === INPUTS ===
+initialCapital = input.float(100.0, minval=1.0, title="Initial Capital (USDT)", group="Risk Management")
+atrSLMultiplier = input.float(1.5, minval=1.0, title="ATR Stop-Loss Multiplier", group="Risk Management")
+atrTPMultiplier = input.float(4.0, minval=1.0, title="ATR Take-Profit Multiplier", group="Risk Management")
+useTrailingStop = input.bool(true, title="Use Trailing Stop", group="Risk Management")
+trailingATRMultiplier = input.float(6.0, minval=1.0, title="Trailing Stop ATR Multiplier", group="Risk Management")
+trailingATRRetrace = input.float(1.0, minval=0.5, title="Trailing Stop Retrace ATR", group="Risk Management")
+useLockInProfit = input.bool(true, title="Use Lock-In Profit Feature", group="Risk Management")
+lockInProfitPercent = input.float(50.0, minval=10.0, maxval=90.0, title="Lock-In Profit %", group="Risk Management", tooltip="Percentage of profit to lock in")
+
+higherTimeframe = input.timeframe("240", title="Higher Timeframe", group="Settings", options=["1", "5", "15", "30", "60", "240", "D", "W"])
+baseTimeframe = input.string("15", title="Base Timeframe (for display)", group="Settings", options=["15", "30"], tooltip="Intended base timeframe - 15 or 30 minutes")
+
+// Moving Averages
+maFast = input.int(21, minval=1, title="Fast MA Period", group="Indicators")
+maSlow = input.int(50, minval=1, title="Slow MA Period", group="Indicators")
+
+// RSI Settings
+rsiPeriod = input.int(14, minval=2, title="RSI Period (for filtering)", group="Indicators")
+rsiFastPeriod = input.int(6, minval=2, title="Fast RSI Period (for entries)", group="Indicators")
+rsiOverbought = input.int(70, minval=50, maxval=90, title="RSI Overbought Level", group="Indicators")
+rsiOversold = input.int(30, minval=10, maxval=50, title="RSI Oversold Level", group="Indicators")
+rsiSpecialLong = input.int(23, minval=10, maxval=40, title="RSI Special Long Threshold", group="Indicators")
+rsiShortEntry = input.int(68, minval=50, maxval=90, title="RSI Short Entry Threshold", group="Indicators")
+
+// Volume Settings
+volumePeriod = input.int(20, minval=5, title="Volume SMA Period", group="Indicators")
+volumeThreshold = input.float(0.7, minval=0.1, maxval=2.0, title="Volume Threshold (multiplier)", group="Indicators", tooltip="Volume must be above this % of average")
+
+// ATR Settings
+atrPeriod = input.int(14, minval=1, title="ATR Period", group="Indicators")
+atrSpecialLong = input.float(1.5, minval=0.5, maxval=5.0, title="ATR Distance for Special Long", group="Indicators")
+
+// Re-entry Settings
+useReEntry = input.bool(true, title="Enable Re-Entry Logic", group="Re-Entry")
+rsiReEntryLong = input.int(27, minval=10, maxval=50, title="RSI Re-Entry Long Threshold", group="Re-Entry")
+rsiReEntryShort = input.int(50, minval=30, maxval=70, title="RSI Re-Entry Short Threshold", group="Re-Entry")
+
+// Display Options
+showTable = input.bool(true, title="Show Info Table", group="Display")
+showSignals = input.bool(true, title="Show Entry/Exit Signals", group="Display")
+showMAs = input.bool(true, title="Show Moving Averages", group="Display")
+showATR = input.bool(false, title="Show ATR Bands", group="Display")
+
+// === /INPUTS ===
+
+// === HIGHER TIMEFRAME DATA ===
+// Get higher timeframe data for signal generation
+htf_close = request.security(syminfo.tickerid, higherTimeframe, close, lookahead=barmerge.lookahead_off)
+htf_open = request.security(syminfo.tickerid, higherTimeframe, open, lookahead=barmerge.lookahead_off)
+htf_high = request.security(syminfo.tickerid, higherTimeframe, high, lookahead=barmerge.lookahead_off)
+htf_low = request.security(syminfo.tickerid, higherTimeframe, low, lookahead=barmerge.lookahead_off)
+htf_volume = request.security(syminfo.tickerid, higherTimeframe, volume, lookahead=barmerge.lookahead_off)
+
+// Check if we're at HTF candle close (only trade at HTF close)
+htf_newBar = ta.change(time(higherTimeframe)) != 0
+htf_isClose = htf_newBar[1]  // Previous bar was HTF close
+
+// === INDICATORS ON HIGHER TIMEFRAME ===
+htf_maFast = request.security(syminfo.tickerid, higherTimeframe, ta.sma(close, maFast), lookahead=barmerge.lookahead_off)
+htf_maSlow = request.security(syminfo.tickerid, higherTimeframe, ta.sma(close, maSlow), lookahead=barmerge.lookahead_off)
+htf_rsi = request.security(syminfo.tickerid, higherTimeframe, ta.rsi(close, rsiPeriod), lookahead=barmerge.lookahead_off)
+htf_rsiFast = request.security(syminfo.tickerid, higherTimeframe, ta.rsi(close, rsiFastPeriod), lookahead=barmerge.lookahead_off)
+htf_atr = request.security(syminfo.tickerid, higherTimeframe, ta.atr(atrPeriod), lookahead=barmerge.lookahead_off)
+htf_volumeSMA = request.security(syminfo.tickerid, higherTimeframe, ta.sma(volume, volumePeriod), lookahead=barmerge.lookahead_off)
+
+// 1H RSI for filtering (used in some conditions)
+htf_1h_rsi = request.security(syminfo.tickerid, "60", ta.rsi(close, rsiPeriod), lookahead=barmerge.lookahead_off)
+
+// Volume condition
+htf_volumeAbove = htf_volume > (htf_volumeSMA * volumeThreshold)
+
+// === CANDLESTICK PATTERNS ===
+htf_isGreen = htf_close > htf_open
+htf_isRed = htf_close < htf_open
+htf_twoGreen = htf_isGreen and htf_isGreen[1]
+htf_twoRed = htf_isRed and htf_isRed[1]
+
+// === ENTRY CONDITIONS ===
+
+// 1. Standard Long Entry
+// Price crosses above 21 MA, volume > 70% avg, 1H RSI < 70
+htf_priceCrossAboveMA = ta.crossover(htf_close, htf_maFast)
+standardLong = htf_priceCrossAboveMA and htf_volumeAbove and htf_1h_rsi < rsiOverbought
+
+// 2. Special Long Entry
+// 6-period RSI crosses above 23, price > 1.5x ATR from 21 MA, price > prior close
+htf_rsiCrossAbove = ta.crossover(htf_rsiFast, rsiSpecialLong)
+htf_priceDistance = math.abs(htf_close - htf_maFast)
+htf_priceAboveATR = htf_priceDistance > (htf_atr * atrSpecialLong)
+specialLong = htf_rsiCrossAbove and htf_priceAboveATR and htf_close > htf_close[1]
+
+// 3. RSI-Based Short Entry
+// 6-period RSI crosses below 68 with volume support
+htf_rsiCrossBelow = ta.crossunder(htf_rsiFast, rsiShortEntry)
+rsiShort = htf_rsiCrossBelow and htf_volumeAbove
+
+// 4. Trend-Based Short Entry
+// Price crosses below 21 MA, volume > 70%, 1H RSI > 30
+htf_priceCrossBelowMA = ta.crossunder(htf_close, htf_maFast)
+trendShort = htf_priceCrossBelowMA and htf_volumeAbove and htf_1h_rsi > rsiOversold
+
+// 5. Red/Green Bar Logic (Candlestick Pattern)
+// Two consecutive green bars for longs, red for shorts
+greenBarLong = htf_twoGreen
+redBarShort = htf_twoRed
+
+// Combined entry signals (only trigger at HTF close)
+longEntry = (standardLong or specialLong or greenBarLong) and htf_isClose
+shortEntry = (rsiShort or trendShort or redBarShort) and htf_isClose
+
+// === RE-ENTRY LOGIC ===
+var bool lastTradeWasLoss = false
+var string lastTradeType = ""
+
+// Calculate crossovers for re-entry (must be in global scope)
+htf_reEntryCrossover = ta.crossover(htf_close, htf_maFast)
+htf_reEntryCrossunder = ta.crossunder(htf_close, htf_maFast)
+
+// Track if last trade was a loss
+if strategy.closedtrades > 0
+    lastTradeProfit = strategy.closedtrades.profit(strategy.closedtrades - 1)
+    if lastTradeProfit < 0
+        lastTradeWasLoss := true
+        lastTradeType := strategy.closedtrades.entry_id(strategy.closedtrades - 1)
+    else
+        lastTradeWasLoss := false
+
+// Re-entry conditions
+reEntryLong = useReEntry and lastTradeWasLoss and (lastTradeType == "SpecialLong" or lastTradeType == "Long") and htf_rsiFast > rsiReEntryLong and htf_reEntryCrossover and htf_isClose
+reEntryShort = useReEntry and lastTradeWasLoss and lastTradeType == "Short" and htf_rsiFast < rsiReEntryShort and htf_reEntryCrossunder and htf_isClose
+
+// Final entry signals
+finalLong = longEntry or reEntryLong
+finalShort = shortEntry or reEntryShort
+
+// === EXIT CONDITIONS ===
+
+// Manual Exit Conditions
+// Long exits: 21 MA crosses below 50 MA OR 1H RSI > 68
+htf_maCrossDown = ta.crossunder(htf_maFast, htf_maSlow)
+exitLongManual = htf_maCrossDown or htf_1h_rsi > (rsiOverbought - 2)
+
+// Short exits: 21 MA crosses above 50 MA OR 1H RSI < 25
+htf_maCrossUp = ta.crossover(htf_maFast, htf_maSlow)
+exitShortManual = htf_maCrossUp or htf_1h_rsi < (rsiOversold + 5)
+
+// Special Long Exit: Price opens below 4H candle's low
+specialLongExit = strategy.position_size > 0 and (lastTradeType == "SpecialLong" or lastTradeType == "Long") and open < htf_low[1]
+
+// === POSITION SIZING ===
+// Calculate position size based on capital
+positionSize = initialCapital / htf_close
+
+// === STRATEGY EXECUTION ===
+
+// Track entry type for proper exit handling
+var string currentEntryType = ""
+
+// Global variables for TP/SL
+var float takeProfit = na
+var float stopLoss = na
+
+// Enter Long Positions
+if finalLong and strategy.position_size == 0
+    entryPrice = close
+    stopLoss := entryPrice - (htf_atr * atrSLMultiplier)
+    takeProfit := entryPrice + (htf_atr * atrTPMultiplier)
+    
+    // Determine entry type
+    if specialLong
+        currentEntryType := "SpecialLong"
+        // Special long uses 4H candle low as stop
+        stopLoss := htf_low[1]
+    else if greenBarLong
+        currentEntryType := "Long"
+        // Green bar logic uses base timeframe candle low
+        stopLoss := low[1]
+    else
+        currentEntryType := "Long"
+    
+    strategy.entry("Long", strategy.long, qty=positionSize, comment="Long Entry")
+    strategy.exit("Long Exit", "Long", stop=stopLoss, limit=takeProfit)
+
+// Enter Short Positions
+if finalShort and strategy.position_size == 0
+    entryPrice = close
+    stopLoss := entryPrice + (htf_atr * atrSLMultiplier)
+    takeProfit := entryPrice - (htf_atr * atrTPMultiplier)
+    
+    // Determine entry type
+    if redBarShort
+        currentEntryType := "Short"
+        // Red bar logic uses base timeframe candle high
+        stopLoss := high[1]
+    else
+        currentEntryType := "Short"
+    
+    strategy.entry("Short", strategy.short, qty=positionSize, comment="Short Entry")
+    strategy.exit("Short Exit", "Short", stop=stopLoss, limit=takeProfit)
+
+// Manual Exits
+if strategy.position_size > 0 and exitLongManual and htf_isClose
+    strategy.close("Long", comment="Manual Exit")
+    currentEntryType := ""
+
+if strategy.position_size < 0 and exitShortManual and htf_isClose
+    strategy.close("Short", comment="Manual Exit")
+    currentEntryType := ""
+
+// Special Long Exit (price opens below 4H low)
+if specialLongExit
+    strategy.close("Long", comment="Special Exit")
+    currentEntryType := ""
+
+// Trailing Stop Logic
+var float longTrailingStop = na
+var float shortTrailingStop = na
+var float longPeak = na
+var float shortTrough = na
+
+if strategy.position_size > 0
+    if na(longPeak) or close > longPeak
+        longPeak := close
+        longTrailingStop := longPeak - (htf_atr * trailingATRMultiplier)
+    else if close < (longPeak - htf_atr * trailingATRRetrace)
+        strategy.close("Long", comment="Trailing Stop")
+        longPeak := na
+        longTrailingStop := na
+        currentEntryType := ""
+    else if useTrailingStop and not na(longTrailingStop) and close < longTrailingStop
+        strategy.close("Long", comment="Trailing Stop")
+        longPeak := na
+        longTrailingStop := na
+        currentEntryType := ""
+
+if strategy.position_size < 0
+    if na(shortTrough) or close < shortTrough
+        shortTrough := close
+        shortTrailingStop := shortTrough + (htf_atr * trailingATRMultiplier)
+    else if close > (shortTrough + htf_atr * trailingATRRetrace)
+        strategy.close("Short", comment="Trailing Stop")
+        shortTrough := na
+        shortTrailingStop := na
+        currentEntryType := ""
+    else if useTrailingStop and not na(shortTrailingStop) and close > shortTrailingStop
+        strategy.close("Short", comment="Trailing Stop")
+        shortTrough := na
+        shortTrailingStop := na
+        currentEntryType := ""
+
+// Lock-In Profit Feature
+if useLockInProfit and strategy.position_size != 0
+    entryPrice = strategy.opentrades.entry_price(strategy.opentrades - 1)
+    if strategy.position_size > 0
+        profitPercent = ((close - entryPrice) / entryPrice) * 100
+        if profitPercent > 0
+            // Lock in portion of profit
+            lockInPrice = entryPrice + ((close - entryPrice) * (lockInProfitPercent / 100))
+            // Update stop to lock-in price if profitable
+            if close > lockInPrice
+                strategy.exit("Long Exit", "Long", stop=lockInPrice, limit=takeProfit)
+    else if strategy.position_size < 0
+        profitPercent = ((entryPrice - close) / entryPrice) * 100
+        if profitPercent > 0
+            // Lock in portion of profit
+            lockInPrice = entryPrice - ((entryPrice - close) * (lockInProfitPercent / 100))
+            // Update stop to lock-in price if profitable
+            if close < lockInPrice
+                strategy.exit("Short Exit", "Short", stop=lockInPrice, limit=takeProfit)
+
+// === PLOTTING ===
+
+// Plot Moving Averages
+plot(showMAs ? htf_maFast : na, color=color.new(color.blue, 0), linewidth=2, title="Fast MA")
+plot(showMAs ? htf_maSlow : na, color=color.new(color.orange, 0), linewidth=2, title="Slow MA")
+
+// Plot ATR Bands
+plot(showATR ? htf_close + (htf_atr * atrTPMultiplier) : na, color=color.new(color.green, 70), title="ATR TP Upper")
+plot(showATR ? htf_close - (htf_atr * atrTPMultiplier) : na, color=color.new(color.red, 70), title="ATR TP Lower")
+
+// Plot Entry Signals
+plotshape(showSignals and finalLong, title="Long Signal", style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 0), size=size.small)
+plotshape(showSignals and finalShort, title="Short Signal", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.small)
+
+// === INFO TABLE ===
+if showTable and barstate.islast
+    var table infoTable = table.new(position.top_right, 2, 10, bgcolor=color.new(color.white, 80), border_width=1)
+    
+    // Current Signal
+    currentSignal = strategy.position_size > 0 ? "LONG" : strategy.position_size < 0 ? "SHORT" : "FLAT"
+    signalColor = strategy.position_size > 0 ? color.green : strategy.position_size < 0 ? color.red : color.gray
+    
+    table.cell(infoTable, 0, 0, "Signal", text_color=color.black, bgcolor=color.new(color.gray, 70))
+    table.cell(infoTable, 1, 0, currentSignal, text_color=signalColor, bgcolor=color.new(color.white, 100))
+    
+    // Entry Type
+    table.cell(infoTable, 0, 1, "Entry Type", text_color=color.black, bgcolor=color.new(color.gray, 70))
+    table.cell(infoTable, 1, 1, currentEntryType, text_color=color.black, bgcolor=color.new(color.white, 100))
+    
+    // TP/SL Levels
+    if strategy.position_size != 0
+        entryPrice = strategy.opentrades.entry_price(strategy.opentrades - 1)
+        tp = strategy.position_size > 0 ? entryPrice + (htf_atr * atrTPMultiplier) : entryPrice - (htf_atr * atrTPMultiplier)
+        sl = strategy.position_size > 0 ? entryPrice - (htf_atr * atrSLMultiplier) : entryPrice + (htf_atr * atrSLMultiplier)
+        
+        table.cell(infoTable, 0, 2, "Take Profit", text_color=color.black, bgcolor=color.new(color.gray, 70))
+        table.cell(infoTable, 1, 2, str.tostring(tp, "#.##"), text_color=color.green, bgcolor=color.new(color.white, 100))
+        
+        table.cell(infoTable, 0, 3, "Stop Loss", text_color=color.black, bgcolor=color.new(color.gray, 70))
+        table.cell(infoTable, 1, 3, str.tostring(sl, "#.##"), text_color=color.red, bgcolor=color.new(color.white, 100))
+    
+    // Equity
+    table.cell(infoTable, 0, 4, "Equity", text_color=color.black, bgcolor=color.new(color.gray, 70))
+    table.cell(infoTable, 1, 4, str.tostring(strategy.equity, "#.##"), text_color=color.black, bgcolor=color.new(color.white, 100))
+    
+    // Trading Pair
+    table.cell(infoTable, 0, 5, "Pair", text_color=color.black, bgcolor=color.new(color.gray, 70))
+    table.cell(infoTable, 1, 5, syminfo.tickerid, text_color=color.black, bgcolor=color.new(color.white, 100))
+    
+    // Trade Size
+    table.cell(infoTable, 0, 6, "Trade Size", text_color=color.black, bgcolor=color.new(color.gray, 70))
+    table.cell(infoTable, 1, 6, str.tostring(positionSize, "#.####"), text_color=color.black, bgcolor=color.new(color.white, 100))
+    
+    // HTF RSI
+    table.cell(infoTable, 0, 7, "HTF RSI", text_color=color.black, bgcolor=color.new(color.gray, 70))
+    table.cell(infoTable, 1, 7, str.tostring(htf_rsi, "#.##"), text_color=color.black, bgcolor=color.new(color.white, 100))
+    
+    // HTF Fast RSI
+    table.cell(infoTable, 0, 8, "Fast RSI", text_color=color.black, bgcolor=color.new(color.gray, 70))
+    table.cell(infoTable, 1, 8, str.tostring(htf_rsiFast, "#.##"), text_color=color.black, bgcolor=color.new(color.white, 100))
+    
+    // Volume Status
+    table.cell(infoTable, 0, 9, "Volume OK", text_color=color.black, bgcolor=color.new(color.gray, 70))
+    volColor = htf_volumeAbove ? color.green : color.red
+    table.cell(infoTable, 1, 9, htf_volumeAbove ? "YES" : "NO", text_color=volColor, bgcolor=color.new(color.white, 100))
+
+// === ALERTS ===
+alertcondition(finalLong, title="Long Entry Signal", message="LONG Entry Signal - Scalping Strategy V2")
+alertcondition(finalShort, title="Short Entry Signal", message="SHORT Entry Signal - Scalping Strategy V2")
+alertcondition(exitLongManual, title="Long Exit Signal", message="LONG Exit Signal")
+alertcondition(exitShortManual, title="Short Exit Signal", message="SHORT Exit Signal")
+
+// === eof.
+
+

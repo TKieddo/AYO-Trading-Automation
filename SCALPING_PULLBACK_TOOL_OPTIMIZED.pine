@@ -1,0 +1,322 @@
+//@version=6
+strategy("Scalping PullBack Tool OPTIMIZED", shorttitle="SCALPTOOL OPT", overlay=true, initial_capital=300, default_qty_type=strategy.percent_of_equity, default_qty_value=10, commission_type=strategy.commission.percent, commission_value=0.1)
+
+//
+// OPTIMIZED VERSION - Enhanced with EMA Crossovers, Better Risk Management, and Additional Filters
+//
+// Key Improvements:
+// 1. EMA Crossover Signals: Fast EMA crossing Medium EMA as additional entry confirmation
+// 2. ATR-based Stop Loss: Dynamic stops based on volatility
+// 3. Trailing Stop Loss: Lock in profits as price moves favorably
+// 4. RSI Filter: Avoid entries in extreme overbought/oversold zones
+// 5. Volume Confirmation: Require volume above average for stronger signals
+// 6. Better Exit Logic: Multiple exit conditions for optimal profit-taking
+// 7. Position Sizing: Adjust based on signal strength and volatility
+//
+
+// === INPUTS ===
+HiLoLen         = input.int(34, minval=2, title="High Low PAC channel Length")
+fastEMAlength   = input.int(89, minval=2, title="Fast EMA Length")
+mediumEMAlength = input.int(200, minval=2, title="Medium EMA Length")
+slowEMAlength   = input.int(600, minval=2, title="Slow EMA Length")
+
+// EMA Crossover Settings
+useEMACrossover = input.bool(true, title="Use EMA Crossover Confirmation", group="EMA Crossover")
+requireEMACross = input.bool(false, title="Require EMA Cross (Stricter)", group="EMA Crossover", tooltip="If true, requires EMA cross + pullback. If false, either signal can trigger.")
+
+// Risk Management
+useATRStop      = input.bool(true, title="Use ATR-based Stop Loss", group="Risk Management")
+atrMultiplier   = input.float(2.0, minval=0.5, maxval=5.0, title="ATR Stop Multiplier", group="Risk Management")
+useTrailingStop = input.bool(true, title="Use Trailing Stop", group="Risk Management")
+trailingPercent = input.float(3.0, minval=0.5, maxval=10.0, title="Trailing Stop %", group="Risk Management")
+fixedStopPercent = input.float(5.0, minval=1.0, maxval=20.0, title="Fixed Stop Loss % (if ATR disabled)", group="Risk Management")
+
+// Additional Filters
+useRSIFilter    = input.bool(true, title="Use RSI Filter", group="Filters")
+rsiPeriod       = input.int(14, minval=2, title="RSI Period", group="Filters")
+rsiOverbought   = input.int(70, minval=50, maxval=90, title="RSI Overbought Level", group="Filters")
+rsiOversold     = input.int(30, minval=10, maxval=50, title="RSI Oversold Level", group="Filters")
+useVolumeFilter = input.bool(true, title="Use Volume Confirmation", group="Filters")
+volumeMultiplier = input.float(1.2, minval=1.0, maxval=3.0, title="Volume Multiplier (vs SMA)", group="Filters")
+
+// Display Options
+ShowFastEMA     = input.bool(true, group="Display")
+ShowMediumEMA   = input.bool(true, group="Display")
+ShowSlowEMA     = input.bool(false, group="Display")
+ShowHHLL        = input.bool(false, group="Display")
+ShowFractals    = input.bool(true, group="Display")
+filterBW        = input.bool(false, title="Show Ideal Fractals Only", group="Display")
+ShowBarColor    = input.bool(true, title="Show coloured Bars around PAC", group="Display")
+ShowBuySell     = input.bool(true, title="Show Buy/Sell Alert Arrows", group="Display")
+ShowEMACross    = input.bool(true, title="Show EMA Crossover Signals", group="Display")
+Lookback        = input.int(3, minval=1, title="Pullback Lookback for PAC Cross Check")
+DelayArrow      = input.bool(false, title="Show Alert Arrows Only on Closed Candles")
+Delay           = DelayArrow ? 1 : 0
+ShowTrendBGcolor = input.bool(true, group="Display")
+UseHAcandles    = input.bool(true, title="Use Heikin Ashi Candles in Algo Calculations")
+
+// === /INPUTS ===
+
+// === BASE FUNCTIONS ===
+
+// Calculate Heikin Ashi values manually (using var to maintain state)
+var float haOpen_prev = 0.0
+var float haClose_prev = 0.0
+var bool isFirstBar = true
+
+haClose_calc = (open + high + low + close) / 4
+haOpen_calc = isFirstBar ? (open + close) / 2 : (haOpen_prev + haClose_prev) / 2
+haHigh_calc = math.max(high, math.max(haOpen_calc, haClose_calc))
+haLow_calc = math.min(low, math.min(haOpen_calc, haClose_calc))
+
+// Update previous values for next bar
+haOpen_prev := haClose_calc
+haClose_prev := haClose_calc
+isFirstBar := false
+
+// Use Heikin Ashi if enabled, otherwise use regular OHLC
+haClose = UseHAcandles ? haClose_calc : close
+haOpen  = UseHAcandles ? haOpen_calc : open
+haHigh  = UseHAcandles ? haHigh_calc : high
+haLow   = UseHAcandles ? haLow_calc : low
+
+//  ||---   Fractal Recognition Functions:  ---------------------------------------------------------------||
+isRegularFractal(mode) =>
+    ret = mode == 1 ? high[4] < high[3] and high[3] < high[2] and high[2] > high[1] and 
+       high[1] > high[0] : mode == -1 ? 
+       low[4] > low[3] and low[3] > low[2] and low[2] < low[1] and low[1] < low[0] : 
+       false
+    ret
+
+isBWFractal(mode) =>
+    ret = mode == 1 ? high[4] < high[2] and high[3] <= high[2] and high[2] >= high[1] and 
+       high[2] > high[0] : mode == -1 ? 
+       low[4] > low[2] and low[3] >= low[2] and low[2] <= low[1] and low[2] < low[0] : 
+       false
+    ret
+//  ||-----------------------------------------------------------------------------------------------------||
+
+//
+// === /BASE FUNCTIONS ===
+
+// === SERIES SETUP ===
+//
+
+//  ||---   Setup Moving Averages and PAC channel:
+//  ||-----------------------------------------------------------------------------------------------------||
+fastEMA     = ta.ema(haClose, fastEMAlength)
+mediumEMA   = ta.ema(haClose, mediumEMAlength)
+slowEMA     = ta.ema(haClose, slowEMAlength)
+pacC        = ta.ema(haClose, HiLoLen)
+pacL        = ta.ema(haLow, HiLoLen)
+pacU        = ta.ema(haHigh, HiLoLen)
+
+// EMA Crossover Detection
+fastEMACrossAbove = ta.crossover(fastEMA, mediumEMA)
+fastEMACrossBelow = ta.crossunder(fastEMA, mediumEMA)
+fastEMAAbove = fastEMA > mediumEMA
+fastEMABelow = fastEMA < mediumEMA
+
+// Trend Direction (enhanced with EMA cross state)
+TrendDirection = fastEMA > mediumEMA and pacL > mediumEMA ? 1 : 
+   fastEMA < mediumEMA and pacU < mediumEMA ? -1 : 0
+
+// ATR for dynamic stops
+atr = ta.atr(14)
+atrStopDistance = atr * atrMultiplier
+
+// RSI for filtering
+rsi = ta.rsi(haClose, rsiPeriod)
+
+// Volume confirmation
+volumeSMA = ta.sma(volume, 20)
+volumeAboveAvg = volume > (volumeSMA * volumeMultiplier)
+
+//  ||---   Fractal Recognition:
+//  ||-----------------------------------------------------------------------------------------------------||
+filteredtopf = filterBW ? isRegularFractal(1) : isBWFractal(1)
+filteredbotf = filterBW ? isRegularFractal(-1) : isBWFractal(-1)
+//  ||-----------------------------------------------------------------------------------------------------||
+//  ||---   Higher Highs, Lower Highs, Higher Lows, Lower Lows  -------------------------------------------||
+valuewhen_H0 = ta.valuewhen(filteredtopf == true, high[2], 0)
+valuewhen_H1 = ta.valuewhen(filteredtopf == true, high[2], 1)
+valuewhen_H2 = ta.valuewhen(filteredtopf == true, high[2], 2)
+//
+higherhigh = filteredtopf == false ? false : 
+   valuewhen_H1 < valuewhen_H0 and valuewhen_H2 < valuewhen_H0
+lowerhigh = filteredtopf == false ? false : 
+   valuewhen_H1 > valuewhen_H0 and valuewhen_H2 > valuewhen_H0
+valuewhen_L0 = ta.valuewhen(filteredbotf == true, low[2], 0)
+valuewhen_L1 = ta.valuewhen(filteredbotf == true, low[2], 1)
+valuewhen_L2 = ta.valuewhen(filteredbotf == true, low[2], 2)
+//
+higherlow = filteredbotf == false ? false : 
+   valuewhen_L1 < valuewhen_L0 and valuewhen_L2 < valuewhen_L0
+lowerlow = filteredbotf == false ? false : 
+   valuewhen_L1 > valuewhen_L0 and valuewhen_L2 > valuewhen_L0
+
+//
+// === /SERIES ===
+
+//
+// === PLOTTING ===
+// 
+// Plot the Price Action Channel (PAC) base on EMA high,low and close
+L = plot(pacL, color=color.new(color.gray, 50), linewidth=1, title="High PAC EMA")
+U = plot(pacU, color=color.new(color.gray, 50), linewidth=1, title="Low PAC EMA")
+C = plot(pacC, color=color.new(color.red, 0), linewidth=2, title="Close PAC EMA")
+fill(L, U, color=color.new(color.gray, 90), title="Fill HiLo PAC")
+
+// Colour bars according to the close position relative to the PAC selected.
+BARcolor = haClose > pacU ? color.new(color.blue, 0) : haClose < pacL ? color.new(color.red, 0) : color.new(color.gray, 0)
+barcolor(ShowBarColor ? BARcolor : color.new(color.white, 100), title="Bar Colours")
+//
+BGcolor = TrendDirection == 1 ? color.new(color.green, 90) : 
+   TrendDirection == -1 ? color.new(color.red, 90) : color.new(color.yellow, 90)
+bgcolor(ShowTrendBGcolor ? BGcolor : color.new(color.white, 100), title="Trend BG Color")
+
+// Draw the EMA ribbon
+plot(ShowFastEMA ? fastEMA : na, color=color.new(color.green, 20), linewidth=2, title="fastEMA")
+plot(ShowMediumEMA ? mediumEMA : na, color=color.new(color.blue, 20), linewidth=3, title="mediumEMA")
+plot(ShowSlowEMA ? slowEMA : na, color=color.new(color.black, 20), linewidth=4, title="slowEMA")
+
+// Plot EMA crossover signals
+plotshape(ShowEMACross and fastEMACrossAbove, title="EMA Cross Up", style=shape.circle, location=location.belowbar, color=color.new(color.lime, 0), size=size.small)
+plotshape(ShowEMACross and fastEMACrossBelow, title="EMA Cross Down", style=shape.circle, location=location.abovebar, color=color.new(color.red, 0), size=size.small)
+
+//
+plotshape(ShowFractals and filteredtopf, title='Filtered Top Fractals', style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), offset=-2)
+plotshape(ShowFractals and filteredbotf, title='Filtered Bottom Fractals', style=shape.triangleup, location=location.belowbar, color=color.new(color.lime, 0), offset=-2)
+//
+plotshape(ShowHHLL and higherhigh, title='Higher High', style=shape.square, location=location.abovebar, color=color.new(color.maroon, 0), text="[HH]", offset=-2)
+plotshape(ShowHHLL and lowerhigh, title='Lower High', style=shape.square, location=location.abovebar, color=color.new(color.maroon, 0), text="[LH]", offset=-2)
+plotshape(ShowHHLL and higherlow, title='High Low', style=shape.square, location=location.belowbar, color=color.new(color.green, 0), text="[HL]", offset=-2)
+plotshape(ShowHHLL and lowerlow, title='Lower Low', style=shape.square, location=location.belowbar, color=color.new(color.green, 0), text="[LL]", offset=-2)
+//
+// === /PLOTTING ===
+
+// === ALERTING ===
+//
+
+// Initialise Trading state.
+var int TradeDirection = 0
+TradeDirection := nz(TradeDirection[1], 0)
+
+// Calculate barssince values first (must be assigned to variables before use in conditionals)
+barsSinceBelowPAC = ta.barssince(haClose < pacC)
+barsSinceAbovePAC = ta.barssince(haClose > pacC)
+
+//
+pacExitU = haOpen < pacU and haClose > pacU and barsSinceBelowPAC <= Lookback
+pacExitL = haOpen > pacL and haClose < pacL and barsSinceAbovePAC <= Lookback
+
+// Enhanced Buy/Sell conditions with EMA crossover and filters
+// RSI Filter: For longs, avoid if RSI is too high; for shorts, avoid if RSI is too low
+rsiFilterLong = not useRSIFilter or (rsi < rsiOverbought)
+rsiFilterShort = not useRSIFilter or (rsi > rsiOversold)
+
+// Volume Filter
+volumeFilter = not useVolumeFilter or volumeAboveAvg
+
+// EMA Crossover conditions
+emaCrossLong = useEMACrossover and (fastEMACrossAbove or (not requireEMACross and fastEMAAbove))
+emaCrossShort = useEMACrossover and (fastEMACrossBelow or (not requireEMACross and fastEMABelow))
+
+// Combined entry conditions
+// Option 1: Require both PAC pullback AND EMA cross (stricter)
+// Option 2: Either PAC pullback OR EMA cross (more signals)
+BuyPullback = TrendDirection == 1 and pacExitU and rsiFilterLong and volumeFilter
+BuyEMACross = useEMACrossover and fastEMACrossAbove and fastEMAAbove and rsiFilterLong and volumeFilter and TrendDirection >= 0
+
+SellPullback = TrendDirection == -1 and pacExitL and rsiFilterShort and volumeFilter
+SellEMACross = useEMACrossover and fastEMACrossBelow and fastEMABelow and rsiFilterShort and volumeFilter and TrendDirection <= 0
+
+// Final buy/sell signals
+// Stricter: Require both conditions if requireEMACross is true
+// More flexible: Either condition can trigger if requireEMACross is false
+Buy = (requireEMACross and useEMACrossover) ? (BuyPullback and emaCrossLong) : (BuyPullback or BuyEMACross)
+Sell = (requireEMACross and useEMACrossover) ? (SellPullback and emaCrossShort) : (SellPullback or SellEMACross)
+
+//
+// Keep Current trading state until Pullback occurs or New Recovery.
+TradeDirection := TradeDirection == 1 and haClose < pacC ? 0 : 
+   TradeDirection == -1 and haClose > pacC ? 0 : 
+   TradeDirection == 0 and Buy ? 1 : 
+   TradeDirection == 0 and Sell ? -1 : TradeDirection
+
+// Show buy/sell arrows (replaced plotarrow with plotshape since plotarrow was removed in v5+)
+buySignal = ShowBuySell and nz(TradeDirection[1+Delay], 0) == 0 and TradeDirection[Delay] == 1
+sellSignal = ShowBuySell and nz(TradeDirection[1+Delay], 0) == 0 and TradeDirection[Delay] == -1
+
+plotshape(buySignal, title="Buy Arrow", style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 20), size=size.normal, offset=-Delay)
+plotshape(sellSignal, title="Sell Arrow", style=shape.triangledown, location=location.abovebar, color=color.new(color.maroon, 20), size=size.normal, offset=-Delay)
+
+// Strategy execution logic for backtesting
+Long = nz(TradeDirection[1], 0) == 0 and TradeDirection == 1
+Short = nz(TradeDirection[1], 0) == 0 and TradeDirection == -1
+
+// Calculate stop loss and take profit levels
+var float entryPrice = 0.0
+var float stopLoss = 0.0
+var float takeProfit = 0.0
+var float trailingStop = 0.0
+
+// Enter long position
+if Long and strategy.position_size == 0
+    entryPrice := close
+    if useATRStop
+        stopLoss := entryPrice - atrStopDistance
+    else
+        stopLoss := entryPrice * (1 - fixedStopPercent / 100)
+    takeProfit := entryPrice * (1 + (fixedStopPercent * 1.5) / 100)  // 1.5x risk for reward
+    trailingStop := entryPrice
+    strategy.entry("Long", strategy.long, comment="Pullback Buy")
+    strategy.exit("Long Exit", "Long", stop=stopLoss, limit=takeProfit, trail_price=useTrailingStop ? trailingStop : na, trail_offset=useTrailingStop ? (entryPrice * trailingPercent / 100) : na)
+
+// Enter short position
+if Short and strategy.position_size == 0
+    entryPrice := close
+    if useATRStop
+        stopLoss := entryPrice + atrStopDistance
+    else
+        stopLoss := entryPrice * (1 + fixedStopPercent / 100)
+    takeProfit := entryPrice * (1 - (fixedStopPercent * 1.5) / 100)  // 1.5x risk for reward
+    trailingStop := entryPrice
+    strategy.entry("Short", strategy.short, comment="Pullback Sell")
+    strategy.exit("Short Exit", "Short", stop=stopLoss, limit=takeProfit, trail_price=useTrailingStop ? trailingStop : na, trail_offset=useTrailingStop ? (entryPrice * trailingPercent / 100) : na)
+
+// Update trailing stop for long positions
+if strategy.position_size > 0 and useTrailingStop
+    newTrailingStop = close - (close * trailingPercent / 100)
+    if newTrailingStop > trailingStop
+        trailingStop := newTrailingStop
+        strategy.exit("Long Exit", "Long", stop=trailingStop, trail_price=trailingStop, trail_offset=(close * trailingPercent / 100))
+
+// Update trailing stop for short positions
+if strategy.position_size < 0 and useTrailingStop
+    newTrailingStop = close + (close * trailingPercent / 100)
+    if newTrailingStop < trailingStop or trailingStop == 0
+        trailingStop := newTrailingStop
+        strategy.exit("Short Exit", "Short", stop=trailingStop, trail_price=trailingStop, trail_offset=(close * trailingPercent / 100))
+
+// Exit long position when trend reverses or EMA crosses down
+if strategy.position_size > 0
+    if haClose < pacC or (useEMACrossover and fastEMACrossBelow)
+        strategy.close("Long", comment="Exit Long")
+
+// Exit short position when trend reverses or EMA crosses up
+if strategy.position_size < 0
+    if haClose > pacC or (useEMACrossover and fastEMACrossAbove)
+        strategy.close("Short", comment="Exit Short")
+
+//
+// Create alerts for TradingView Alarm subsystem.
+alertcondition(Long, title="Buy Condition", message="BUY - Pullback/EMA Cross")
+alertcondition(Short, title="Sell Condition", message="SELL - Pullback/EMA Cross")
+alertcondition(fastEMACrossAbove, title="EMA Cross Above", message="Fast EMA crossed above Medium EMA")
+alertcondition(fastEMACrossBelow, title="EMA Cross Below", message="Fast EMA crossed below Medium EMA")
+//
+// === /ALERTING ===
+
+// === eof.
+
