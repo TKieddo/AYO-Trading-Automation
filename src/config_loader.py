@@ -130,7 +130,10 @@ CONFIG = {
     # DeepSeek-specific settings
     "deepseek_max_tokens": _get_int("DEEPSEEK_MAX_TOKENS", 64000),  # Max for reasoner
     # Runtime controls via env
-    "assets": _get_env("ASSETS"),  # e.g., "BTC ETH SOL" or "BTC,ETH,SOL"
+    # Asset configuration: support separate CRYPTO_ASSETS and FOREX_ASSETS, or legacy ASSETS
+    "crypto_assets": _get_env("CRYPTO_ASSETS"),  # e.g., "BTC ETH SOL BNB ZEC DOGE AVAX XLM XMR"
+    "forex_assets": _get_env("FOREX_ASSETS"),  # e.g., "EURUSD GBPUSD USDJPY AUDUSD"
+    "assets": _get_env("ASSETS"),  # Legacy: e.g., "BTC ETH SOL" or "BTC,ETH,SOL" (fallback if CRYPTO_ASSETS/FOREX_ASSETS not set)
     "interval": _get_env("INTERVAL"),  # e.g., "5m", "1h"
     # Strategy selection (default: None/empty uses LLM trend strategy)
     "strategy": _get_env("STRATEGY"),  # Options: "default", "llm_trend", "scalping", "auto", etc.
@@ -152,6 +155,43 @@ CONFIG = {
     # Multi-exchange mode (trade on multiple exchanges simultaneously)
     "MULTI_EXCHANGE_MODE": _get_env("MULTI_EXCHANGE_MODE", "false"),  # Set to "true" to enable
 }
+
+def _parse_assets(assets_str: str | None) -> list[str]:
+    """Parse assets from environment variable (supports space or comma separated).
+    
+    Args:
+        assets_str: Asset string like "BTC ETH SOL" or "BTC,ETH,SOL"
+        
+    Returns:
+        List of asset symbols (uppercase, stripped)
+    """
+    if not assets_str:
+        return []
+    # Support both space and comma separated
+    if "," in assets_str:
+        return [a.strip().upper() for a in assets_str.split(",") if a.strip()]
+    else:
+        return [a.strip().upper() for a in assets_str.split(" ") if a.strip()]
+
+# Combine CRYPTO_ASSETS and FOREX_ASSETS into a single assets list
+_crypto_assets_list = _parse_assets(CONFIG.get("crypto_assets"))
+_forex_assets_list = _parse_assets(CONFIG.get("forex_assets"))
+_legacy_assets_list = _parse_assets(CONFIG.get("assets"))
+
+# Build combined assets list: prefer CRYPTO_ASSETS + FOREX_ASSETS, fallback to legacy ASSETS
+if _crypto_assets_list or _forex_assets_list:
+    CONFIG["assets"] = " ".join(_crypto_assets_list + _forex_assets_list)
+    CONFIG["crypto_assets_list"] = _crypto_assets_list
+    CONFIG["forex_assets_list"] = _forex_assets_list
+elif _legacy_assets_list:
+    # Fallback to legacy ASSETS if CRYPTO_ASSETS/FOREX_ASSETS not set
+    CONFIG["assets"] = " ".join(_legacy_assets_list)
+    CONFIG["crypto_assets_list"] = _legacy_assets_list  # Assume all are crypto for backward compatibility
+    CONFIG["forex_assets_list"] = []
+else:
+    CONFIG["assets"] = None
+    CONFIG["crypto_assets_list"] = []
+    CONFIG["forex_assets_list"] = []
 
 # Load per-asset leverage settings (e.g., ZEC_LEVERAGE=5, BTC_LEVERAGE=10)
 # This scans all environment variables matching {ASSET}_LEVERAGE pattern

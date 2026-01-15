@@ -2,23 +2,83 @@ import { NextResponse } from "next/server";
 import { getHyperliquidEnv, getHyperliquidBalances } from "@/lib/hyperliquid";
 import { getServerSupabase } from "@/lib/supabase/server";
 
+const PYTHON_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+
 export async function GET() {
+  // First, try to get balances from Python backend (preferred - no credentials needed in Vercel)
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    
+    const response = await fetch(`${PYTHON_API_URL}/status`, {
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (response.ok) {
+      const statusData = await response.json();
+      
+      // Also try to get positions for more detailed balance info
+      try {
+        const positionsResponse = await fetch(`${PYTHON_API_URL}/positions`, {
+          cache: "no-store",
+        });
+        
+        if (positionsResponse.ok) {
+          const positions = await positionsResponse.json();
+          
+          // Calculate total unrealized PnL
+          const totalUnrealizedPnl = positions.reduce((sum: number, p: any) => 
+            sum + (Number(p.unrealized_pnl || p.pnl || 0)), 0
+          );
+          
+          // Return balance info from Python backend
+          return NextResponse.json({
+            balances: [],
+            accountValue: statusData.account_value || statusData.balance || 0,
+            withdrawable: statusData.balance || 0,
+            totalUnrealizedPnl: totalUnrealizedPnl,
+            positions: positions.length,
+            exchange: statusData.exchange || "hyperliquid",
+            network: statusData.network || statusData.network_label || "mainnet",
+            source: "python_backend"
+          });
+        }
+      } catch (e) {
+        // Fall through to status-only response
+      }
+      
+      // Return basic balance from status
+      return NextResponse.json({
+        balances: [],
+        accountValue: statusData.account_value || statusData.balance || 0,
+        withdrawable: statusData.balance || 0,
+        positions: statusData.positions_count || 0,
+        exchange: statusData.exchange || "hyperliquid",
+        network: statusData.network || statusData.network_label || "mainnet",
+        source: "python_backend"
+      });
+    }
+  } catch (error: any) {
+    // Python backend not available, fallback to direct API call
+    if (error.code !== 'ECONNREFUSED' && !error.message?.includes('fetch failed')) {
+      console.log("Python backend not available, trying direct API call");
+    }
+  }
+  
+  // Fallback: Direct API call (requires credentials in Vercel - not recommended for production)
   try {
     // Read network directly from env var first (as fallback/verification)
     const networkFromEnv = process.env.HYPERLIQUID_NETWORK?.toLowerCase().trim() || "mainnet";
     
     let env = getHyperliquidEnv();
     if (!env) {
-      const missing = [];
-      if (!process.env.HYPERLIQUID_WALLET_ADDRESS) {
-        missing.push("HYPERLIQUID_WALLET_ADDRESS (your wallet address, 0x...)");
-      }
-      
-      const errorMsg = `Missing Hyperliquid credentials. Please set:\n${missing.join("\n")}\n\n` +
-        "Note: Use your MAIN wallet address (the one you logged in with), not the API wallet address.\n" +
-        "The API wallet private key is used for trading, but balances are queried from your main wallet.";
-      
-      return NextResponse.json({ error: errorMsg }, { status: 400 });
+      return NextResponse.json({ 
+        error: "Python backend not available and Hyperliquid credentials not configured. Please ensure your Python trading agent is running.",
+        hint: "Start your Python agent with: poetry run python src/main.py"
+      }, { status: 503 });
     }
 
     // Ensure baseUrl matches the env var (fixes Next.js env caching issues)

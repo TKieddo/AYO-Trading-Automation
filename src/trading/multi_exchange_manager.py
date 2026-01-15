@@ -82,55 +82,40 @@ class MultiExchangeManager:
     def _map_assets_to_exchanges(self):
         """Map assets to their appropriate exchanges.
         
-        Crypto assets (BTC, ETH, SOL, etc.) -> Aster/Hyperliquid
-        Forex pairs (EURUSD, GBPUSD, etc.) -> Pepperstone
+        Uses CRYPTO_ASSETS and FOREX_ASSETS from config to explicitly map:
+        - Crypto assets -> Aster/Hyperliquid
+        - Forex pairs -> Pepperstone
         """
-        # Common crypto assets
-        crypto_assets = {
-            "BTC", "ETH", "SOL", "BNB", "DOGE", "XRP", "ADA", "AVAX", 
-            "MATIC", "DOT", "LINK", "UNI", "ATOM", "ETC", "LTC", "BCH",
-            "ARB", "OP", "SUI", "APT", "NEAR", "ALGO", "FIL", "ICP"
-        }
+        # Get explicit asset lists from config
+        crypto_assets_list = CONFIG.get("crypto_assets_list", [])
+        forex_assets_list = CONFIG.get("forex_assets_list", [])
         
-        # Common forex pairs (detect by format)
-        forex_patterns = ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"]
-        
-        # Get assets from config
-        assets_env = CONFIG.get("assets")
-        if assets_env:
-            if "," in assets_env:
-                assets = [a.strip().upper() for a in assets_env.split(",") if a.strip()]
+        # Map crypto assets to crypto exchange
+        for asset in crypto_assets_list:
+            asset_upper = asset.upper()
+            if "aster" in self.exchanges:
+                self.asset_to_exchange[asset_upper] = "aster"
+                logging.debug(f"📌 Mapped crypto asset {asset_upper} -> Aster")
+            elif "hyperliquid" in self.exchanges:
+                self.asset_to_exchange[asset_upper] = "hyperliquid"
+                logging.debug(f"📌 Mapped crypto asset {asset_upper} -> Hyperliquid")
             else:
-                assets = [a.strip().upper() for a in assets_env.split(" ") if a.strip()]
-            
-            for asset in assets:
-                # Check if it's a crypto asset
-                if asset in crypto_assets or any(crypto in asset for crypto in ["BTC", "ETH", "SOL"]):
-                    # Map to crypto exchange
-                    if "aster" in self.exchanges:
-                        self.asset_to_exchange[asset] = "aster"
-                    elif "hyperliquid" in self.exchanges:
-                        self.asset_to_exchange[asset] = "hyperliquid"
-                    else:
-                        logging.warning(f"⚠️  No crypto exchange available for {asset}")
-                
-                # Check if it's a forex pair
-                elif any(fx in asset for fx in forex_patterns) and len(asset) >= 6:
-                    # Map to forex exchange
-                    if "pepperstone" in self.exchanges:
-                        self.asset_to_exchange[asset] = "pepperstone"
-                    else:
-                        logging.warning(f"⚠️  No forex exchange available for {asset}")
-                
-                else:
-                    # Try to auto-detect
-                    if "pepperstone" in self.exchanges and any(fx in asset for fx in ["USD", "EUR", "GBP", "JPY"]):
-                        self.asset_to_exchange[asset] = "pepperstone"
-                    elif "aster" in self.exchanges or "hyperliquid" in self.exchanges:
-                        crypto_exchange = "aster" if "aster" in self.exchanges else "hyperliquid"
-                        self.asset_to_exchange[asset] = crypto_exchange
-                    else:
-                        logging.warning(f"⚠️  Could not determine exchange for {asset}")
+                logging.warning(f"⚠️  No crypto exchange available for {asset_upper}")
+        
+        # Map forex assets to forex exchange
+        for asset in forex_assets_list:
+            asset_upper = asset.upper()
+            if "pepperstone" in self.exchanges:
+                self.asset_to_exchange[asset_upper] = "pepperstone"
+                logging.debug(f"📌 Mapped forex asset {asset_upper} -> Pepperstone")
+            else:
+                logging.warning(f"⚠️  No forex exchange available for {asset_upper}")
+        
+        # Log mapping summary
+        if crypto_assets_list or forex_assets_list:
+            logging.info(f"✅ Asset mapping complete: {len(crypto_assets_list)} crypto, {len(forex_assets_list)} forex")
+        else:
+            logging.warning("⚠️  No assets configured in CRYPTO_ASSETS or FOREX_ASSETS")
     
     def get_exchange_for_asset(self, asset: str) -> Optional[Any]:
         """Get the appropriate exchange for an asset.
@@ -143,24 +128,32 @@ class MultiExchangeManager:
         """
         asset_upper = asset.upper()
         
-        # Check explicit mapping first
+        # Check explicit mapping first (from CRYPTO_ASSETS/FOREX_ASSETS)
         if asset_upper in self.asset_to_exchange:
             exchange_name = self.asset_to_exchange[asset_upper]
-            return self.exchanges.get(exchange_name)
+            exchange = self.exchanges.get(exchange_name)
+            if exchange:
+                return exchange
+            else:
+                logging.warning(f"⚠️  Exchange '{exchange_name}' not found for asset {asset_upper}")
         
-        # Auto-detect based on asset format
+        # Fallback: Auto-detect based on asset format (for backward compatibility)
         # Forex pairs typically have 6+ characters and contain currency codes
         forex_indicators = ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"]
         if len(asset_upper) >= 6 and any(fx in asset_upper for fx in forex_indicators):
             if "pepperstone" in self.exchanges:
+                logging.debug(f"🔍 Auto-detected {asset_upper} as forex -> Pepperstone")
                 return self.exchanges["pepperstone"]
         
         # Default to crypto exchange
         if "aster" in self.exchanges:
+            logging.debug(f"🔍 Auto-detected {asset_upper} as crypto -> Aster")
             return self.exchanges["aster"]
         elif "hyperliquid" in self.exchanges:
+            logging.debug(f"🔍 Auto-detected {asset_upper} as crypto -> Hyperliquid")
             return self.exchanges["hyperliquid"]
         
+        logging.error(f"❌ No exchange found for asset {asset_upper}")
         return None
     
     def get_exchange_name_for_asset(self, asset: str) -> Optional[str]:

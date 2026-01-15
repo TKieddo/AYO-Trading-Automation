@@ -2,20 +2,75 @@ import { NextResponse } from "next/server";
 import { getAsterEnv, asterSignedGet } from "@/lib/aster";
 import { getServerSupabase } from "@/lib/supabase/server";
 
+const PYTHON_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+
 export async function GET() {
+  // First, try to get balances from Python backend (preferred - no credentials needed in Vercel)
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    
+    const response = await fetch(`${PYTHON_API_URL}/status`, {
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (response.ok) {
+      const statusData = await response.json();
+      
+      // Also try to get positions for more detailed balance info
+      try {
+        const positionsResponse = await fetch(`${PYTHON_API_URL}/positions`, {
+          cache: "no-store",
+        });
+        
+        if (positionsResponse.ok) {
+          const positions = await positionsResponse.json();
+          
+          // Return balance info from Python backend
+          return NextResponse.json({
+            balance: statusData.balance || 0,
+            accountValue: statusData.account_value || statusData.balance || 0,
+            totalUnrealizedPnl: positions.reduce((sum: number, p: any) => 
+              sum + (Number(p.unrealized_pnl || p.pnl || 0)), 0
+            ),
+            positions: positions.length,
+            exchange: statusData.exchange || "aster",
+            network: statusData.network || statusData.network_label || "mainnet",
+            source: "python_backend"
+          });
+        }
+      } catch (e) {
+        // Fall through to direct API call
+      }
+      
+      // Return basic balance from status
+      return NextResponse.json({
+        balance: statusData.balance || 0,
+        accountValue: statusData.account_value || statusData.balance || 0,
+        positions: statusData.positions_count || 0,
+        exchange: statusData.exchange || "aster",
+        network: statusData.network || statusData.network_label || "mainnet",
+        source: "python_backend"
+      });
+    }
+  } catch (error: any) {
+    // Python backend not available, fallback to direct API call
+    if (error.code !== 'ECONNREFUSED' && !error.message?.includes('fetch failed')) {
+      console.log("Python backend not available, trying direct API call");
+    }
+  }
+  
+  // Fallback: Direct API call (requires credentials in Vercel - not recommended)
   try {
     const env = getAsterEnv();
     if (!env) {
-      const missing = [];
-      if (!process.env.ASTER_USER_ADDRESS) missing.push("ASTER_USER_ADDRESS (main wallet address)");
-      if (!process.env.ASTER_SIGNER_ADDRESS) missing.push("ASTER_SIGNER_ADDRESS (API wallet address)");
-      if (!process.env.ASTER_PRIVATE_KEY) missing.push("ASTER_PRIVATE_KEY (API wallet private key)");
-      
-      const errorMsg = `Missing Aster API credentials. Please set:\n${missing.join("\n")}\n\n` +
-        "These are wallet addresses and private keys, not traditional API keys.\n" +
-        "Find them in your Aster dashboard under API/API Wallet settings.";
-      
-      return NextResponse.json({ error: errorMsg }, { status: 400 });
+      return NextResponse.json({ 
+        error: "Python backend not available and Aster credentials not configured in Vercel. Please ensure your Python trading agent is running.",
+        hint: "Start your Python agent with: poetry run python src/main.py"
+      }, { status: 503 });
     }
 
     // Fetch balances, account info, and positions in parallel (matching Python implementation)
