@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
     const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1); // Start of month 12 months ago
 
     // Step 1: Get account value history for last 12 months
-    const { data: balanceHistory, error: balanceError } = await sb
+    const { data: balanceHistoryData, error: balanceError } = await sb
       .from("wallet_balance_history")
       .select("account_value, timestamp")
       .gte("timestamp", twelveMonthsAgo.toISOString())
@@ -44,13 +44,17 @@ export async function GET(req: NextRequest) {
     if (balanceError) throw balanceError;
 
     // Step 2: Get portfolio activities for last 12 months
-    const { data: activities, error: activitiesError } = await sb
+    const { data: activitiesData, error: activitiesError } = await sb
       .from("portfolio_activities")
       .select("type, amount, timestamp")
       .gte("timestamp", twelveMonthsAgo.toISOString())
       .order("timestamp", { ascending: true });
 
     if (activitiesError) throw activitiesError;
+
+    // Type the query results explicitly
+    const balanceHistory: BalanceHistoryRecord[] = (balanceHistoryData || []) as BalanceHistoryRecord[];
+    const activities: PortfolioActivityRecord[] = (activitiesData || []) as PortfolioActivityRecord[];
 
     // Step 3: Group data by month
     const monthlyData: Map<string, MonthlyAccountValueData> = new Map();
@@ -71,8 +75,7 @@ export async function GET(req: NextRequest) {
 
     // Step 4: Process balance history to get opening/closing balances per month
     if (balanceHistory && balanceHistory.length > 0) {
-      const typedBalanceHistory = balanceHistory as BalanceHistoryRecord[];
-      for (const record of typedBalanceHistory) {
+      for (const record of balanceHistory) {
         const recordDate = new Date(record.timestamp);
         const monthKey = `${recordDate.getFullYear()}-${String(recordDate.getMonth() + 1).padStart(2, "0")}`;
         const monthData = monthlyData.get(monthKey);
@@ -93,8 +96,7 @@ export async function GET(req: NextRequest) {
 
     // Step 5: Process activities to calculate gains/losses per month
     if (activities && activities.length > 0) {
-      const typedActivities = activities as PortfolioActivityRecord[];
-      for (const activity of typedActivities) {
+      for (const activity of activities) {
         const activityDate = new Date(activity.timestamp);
         const monthKey = `${activityDate.getFullYear()}-${String(activityDate.getMonth() + 1).padStart(2, "0")}`;
         const monthData = monthlyData.get(monthKey);
