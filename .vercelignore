@@ -1,0 +1,55 @@
+# Ignore Python backend code - only deploy Next.js dashboard
+# This file tells Vercel to ignore these files/directories during build
+
+# Python files and directories
+src/
+*.py
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+env/
+.env/
+
+# Python package files (CRITICAL - prevents Python build)
+pyproject.toml
+poetry.lock
+requirements.txt
+setup.py
+setup.cfg
+
+# Documentation (keep dashboard docs)
+*.md
+!dashboard/**/*.md
+
+# Environment files
+.env
+.env.*
+!dashboard/.env.local
+
+# Logs and data files
+*.log
+diary.jsonl
+*.jsonl
+
+# Other files
+*.pem
+.DS_Store
+.vscode/
+.idea/
+*.ps1
+*.sh
+Dockerfile
+docs/
+*.pine
+trading_agent.log
+alert_service.log
+llm_requests.log
+prompts.log
+
+# Node modules (except dashboard)
+node_modules/
+!dashboard/node_modules/

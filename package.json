@@ -1,0 +1,14 @@
+{
+  "name": "ayo-trading-automation",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AYO Trading Automation Platform - Next.js Dashboard",
+  "scripts": {
+    "build": "cd dashboard && npm ci && npm run build",
+    "dev": "cd dashboard && npm run dev",
+    "start": "cd dashboard && npm start"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

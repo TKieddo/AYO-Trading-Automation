@@ -1,0 +1,36 @@
+{
+  "buildCommand": "cd dashboard && npm ci && npm run build",
+  "devCommand": "cd dashboard && npm run dev",
+  "installCommand": "cd dashboard && npm ci",
+  "framework": "nextjs",
+  "outputDirectory": "dashboard/.next",
+  "regions": ["iad1"],
+  "env": {
+    "NODE_ENV": "production"
+  },
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/api/:path*"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "X-XSS-Protection",
+          "value": "1; mode=block"
+        }
+      ]
+    }
+  ]
+}
