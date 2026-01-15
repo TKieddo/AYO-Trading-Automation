@@ -10,6 +10,17 @@ export type PeriodAccountValueData = {
   periodLabel: string; // Day name, week number, or month name
 };
 
+type BalanceHistoryRecord = {
+  account_value: string | number | null;
+  timestamp: string;
+};
+
+type PortfolioActivityRecord = {
+  type: string;
+  amount: string | number | null;
+  timestamp: string;
+};
+
 /**
  * GET: Fetch period-based account value data
  * Query params: period (week, month, year)
@@ -43,7 +54,7 @@ export async function GET(req: NextRequest) {
       startDate = monday;
 
       // Get balance history for current week
-      const { data: balanceHistory, error: balanceError } = await sb
+      const { data: balanceHistoryData, error: balanceError } = await sb
         .from("wallet_balance_history")
         .select("account_value, timestamp")
         .gte("timestamp", startDate.toISOString())
@@ -53,7 +64,7 @@ export async function GET(req: NextRequest) {
       if (balanceError) throw balanceError;
 
       // Get activities for current week
-      const { data: activities, error: activitiesError } = await sb
+      const { data: activitiesData, error: activitiesError } = await sb
         .from("portfolio_activities")
         .select("type, amount, timestamp")
         .gte("timestamp", startDate.toISOString())
@@ -61,6 +72,10 @@ export async function GET(req: NextRequest) {
         .order("timestamp", { ascending: true });
 
       if (activitiesError) throw activitiesError;
+
+      // Type the query results explicitly
+      const balanceHistory: BalanceHistoryRecord[] = (balanceHistoryData || []) as BalanceHistoryRecord[];
+      const activities: PortfolioActivityRecord[] = (activitiesData || []) as PortfolioActivityRecord[];
 
       // Group by day (Monday to Sunday)
       const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -146,7 +161,7 @@ export async function GET(req: NextRequest) {
       startDate = firstMonday;
 
       // Get balance history for the month
-      const { data: balanceHistory, error: balanceError } = await sb
+      const { data: balanceHistoryData, error: balanceError } = await sb
         .from("wallet_balance_history")
         .select("account_value, timestamp")
         .gte("timestamp", startDate.toISOString())
@@ -156,7 +171,7 @@ export async function GET(req: NextRequest) {
       if (balanceError) throw balanceError;
 
       // Get activities for the month
-      const { data: activities, error: activitiesError } = await sb
+      const { data: activitiesData, error: activitiesError } = await sb
         .from("portfolio_activities")
         .select("type, amount, timestamp")
         .gte("timestamp", startDate.toISOString())
@@ -164,6 +179,10 @@ export async function GET(req: NextRequest) {
         .order("timestamp", { ascending: true });
 
       if (activitiesError) throw activitiesError;
+
+      // Type the query results explicitly
+      const balanceHistory: BalanceHistoryRecord[] = (balanceHistoryData || []) as BalanceHistoryRecord[];
+      const activities: PortfolioActivityRecord[] = (activitiesData || []) as PortfolioActivityRecord[];
 
       // Group by week (5 weeks)
       for (let week = 0; week < 5; week++) {
@@ -242,7 +261,7 @@ export async function GET(req: NextRequest) {
       startDate = twelveMonthsAgo;
 
       // Get balance history for last 12 months
-      const { data: balanceHistory, error: balanceError } = await sb
+      const { data: balanceHistoryData, error: balanceError } = await sb
         .from("wallet_balance_history")
         .select("account_value, timestamp")
         .gte("timestamp", startDate.toISOString())
@@ -251,13 +270,17 @@ export async function GET(req: NextRequest) {
       if (balanceError) throw balanceError;
 
       // Get activities for last 12 months
-      const { data: activities, error: activitiesError } = await sb
+      const { data: activitiesData, error: activitiesError } = await sb
         .from("portfolio_activities")
         .select("type, amount, timestamp")
         .gte("timestamp", startDate.toISOString())
         .order("timestamp", { ascending: true });
 
       if (activitiesError) throw activitiesError;
+
+      // Type the query results explicitly
+      const balanceHistory: BalanceHistoryRecord[] = (balanceHistoryData || []) as BalanceHistoryRecord[];
+      const activities: PortfolioActivityRecord[] = (activitiesData || []) as PortfolioActivityRecord[];
 
       // Group by month
       const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
