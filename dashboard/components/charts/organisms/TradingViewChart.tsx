@@ -119,32 +119,32 @@ export function TradingViewChart({
           return;
         }
         
-        widgetRef.current = new (window as any).TradingView.widget({
-          autosize: true,
+          widgetRef.current = new (window as any).TradingView.widget({
+            autosize: true,
           symbol: formattedSymbol,
-          interval: tvTimeframe,
-          timezone: "Etc/UTC",
+            interval: tvTimeframe,
+            timezone: "Etc/UTC",
           theme: "dark",
-          style: "1",
-          locale: "en",
+            style: "1",
+            locale: "en",
           toolbar_bg: "#000000",
-          enable_publishing: false,
-          allow_symbol_change: true,
-          container_id: containerId,
-          hide_side_toolbar: false,
-          disabled_features: [
-            "use_localstorage_for_settings",
-            "volume_force_overlay",
-            "create_volume_indicator_by_default",
-          ],
+            enable_publishing: false,
+            allow_symbol_change: true,
+            container_id: containerId,
+            hide_side_toolbar: false,
+            disabled_features: [
+              "use_localstorage_for_settings",
+              "volume_force_overlay",
+              "create_volume_indicator_by_default",
+            ],
           enabled_features: [
             "study_templates",
             "side_toolbar_in_fullscreen_mode",
             "header_in_all_windows",
           ],
-          overrides: {
+            overrides: {
             "paneProperties.background": "#000000",
-            "paneProperties.backgroundType": "solid",
+              "paneProperties.backgroundType": "solid",
             "paneProperties.showPriceLine": true,
             "paneProperties.showVolumePane": false,
             // Dark mode candle colors
@@ -157,9 +157,9 @@ export function TradingViewChart({
           },
         });
         
-        setIsLoaded(true);
-      } catch (error) {
-        console.error("Error creating TradingView widget:", error);
+          setIsLoaded(true);
+        } catch (error) {
+          console.error("Error creating TradingView widget:", error);
         setError(`Failed to initialize TradingView chart. Symbol: ${formatSymbol(symbol)}`);
       }
     };

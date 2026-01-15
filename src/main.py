@@ -132,22 +132,22 @@ def main():
             raise ValueError("No exchanges available in multi-exchange mode")
     else:
         # Single exchange mode (original behavior)
-        if exchange_name == "aster":
-            from src.trading.aster_api import AsterAPI
-            try:
-                exchange = AsterAPI()
-                logging.info(f"✅ Using Aster DEX (default)")
-            except ValueError as e:
-                logging.error(f"❌ Failed to initialize Aster: {e}")
-                logging.info("💡 Falling back to Hyperliquid...")
-                from src.trading.hyperliquid_api import HyperliquidAPI
-                exchange = HyperliquidAPI()
-                exchange_name = "hyperliquid"
-        elif exchange_name == "hyperliquid":
+    if exchange_name == "aster":
+        from src.trading.aster_api import AsterAPI
+        try:
+            exchange = AsterAPI()
+            logging.info(f"✅ Using Aster DEX (default)")
+        except ValueError as e:
+            logging.error(f"❌ Failed to initialize Aster: {e}")
+            logging.info("💡 Falling back to Hyperliquid...")
             from src.trading.hyperliquid_api import HyperliquidAPI
             exchange = HyperliquidAPI()
-            network = CONFIG.get("hyperliquid_network", "mainnet")
-            logging.info(f"✅ Using Hyperliquid ({network})")
+            exchange_name = "hyperliquid"
+    elif exchange_name == "hyperliquid":
+        from src.trading.hyperliquid_api import HyperliquidAPI
+        exchange = HyperliquidAPI()
+        network = CONFIG.get("hyperliquid_network", "mainnet")
+        logging.info(f"✅ Using Hyperliquid ({network})")
         elif exchange_name == "pepperstone":
             from src.trading.pepperstone_api import PepperstoneAPI
             try:
@@ -157,12 +157,12 @@ def main():
             except (ValueError, ImportError) as e:
                 logging.error(f"❌ Failed to initialize Pepperstone: {e}")
                 raise ValueError(f"Pepperstone initialization failed: {e}")
-        else:
+    else:
             raise ValueError(f"Unknown exchange: {exchange_name}. Use 'aster', 'hyperliquid', or 'pepperstone'")
-        
-        # Use 'exchange' as the variable name throughout (aliased for compatibility)
-        # Keep 'hyperliquid' variable name for backward compatibility in code
-        hyperliquid = exchange
+    
+    # Use 'exchange' as the variable name throughout (aliased for compatibility)
+    # Keep 'hyperliquid' variable name for backward compatibility in code
+    hyperliquid = exchange
         exchange_manager = None
     
     # Initialize trading strategy using factory
