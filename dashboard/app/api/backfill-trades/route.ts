@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
     }
     
     if (ordersToSave.length > 0) {
-      await sb.from("orders").upsert(ordersToSave, { onConflict: "order_id" });
+      await sb.from("orders").upsert(ordersToSave as any, { onConflict: "order_id" });
       console.log(`Saved ${ordersToSave.length} orders from Hyperliquid fills`);
     }
     
@@ -118,7 +118,7 @@ export async function POST(req: NextRequest) {
       });
       if (series.length) {
         const mapped = series.map((s) => ({ date: s.date, value: s.value, pnl: s.pnl }));
-        await sb.from("performance_series").upsert(mapped, { onConflict: "date" });
+        await sb.from("performance_series").upsert(mapped as any, { onConflict: "date" });
       }
     }
 
