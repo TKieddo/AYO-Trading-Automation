@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAsterEnv, getAsterIncomeHistory } from "@/lib/aster";
 import { getServerSupabase } from "@/lib/supabase/server";
 
+type PortfolioActivityRecord = {
+  timestamp: string;
+  [key: string]: any;
+};
+
 /**
  * Map Aster API income types to our activity types
  */
@@ -38,13 +43,14 @@ export async function GET(req: NextRequest) {
     let lastSyncTime: number | null = null;
     if (!forceSync) {
       try {
-        const { data: lastActivity } = await sb
+        const { data: lastActivityData } = await sb
           .from("portfolio_activities")
           .select("timestamp")
           .order("timestamp", { ascending: false })
           .limit(1)
           .maybeSingle();
 
+        const lastActivity = lastActivityData as PortfolioActivityRecord | null;
         if (lastActivity?.timestamp) {
           lastSyncTime = new Date(lastActivity.timestamp).getTime();
         }
