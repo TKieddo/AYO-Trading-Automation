@@ -49,7 +49,7 @@ export function PerformanceSection({ data }: PerformanceSectionProps) {
       
       <div className="relative z-10 grid grid-cols-12 gap-6">
         {/* Left Side - Performance Data and Metrics */}
-        <div className="col-span-7">
+        <div className="col-span-8">
           <div className="flex items-center gap-2 mb-4">
             <h2 className="text-white text-lg font-semibold">Performance</h2>
             <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -110,7 +110,7 @@ export function PerformanceSection({ data }: PerformanceSectionProps) {
 
         {/* Right Sidebar - Cards */}
         {data.rightSidebar && (
-          <div className="col-span-5 flex flex-col gap-4">
+          <div className="col-span-4 flex flex-col gap-4">
             {/* NFT Card */}
             <div className="rounded-xl bg-gray-800 p-4">
               <div className="w-full h-32 bg-gray-700 rounded-lg mb-3 flex items-center justify-center overflow-hidden">
