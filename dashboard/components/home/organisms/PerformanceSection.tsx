@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import { MetricIcon } from "../atoms/MetricIcon";
 import { ActivitySection } from "./ActivitySection";
 
@@ -6,6 +9,19 @@ interface PerformanceData {
   period: string;
   change: string;
   strategies?: Array<{
+    pair: string;
+    profit: string;
+    profitPercent: string;
+    performance: string;
+    category?: "crypto" | "forex";
+  }>;
+  cryptoStrategies?: Array<{
+    pair: string;
+    profit: string;
+    profitPercent: string;
+    performance: string;
+  }>;
+  forexStrategies?: Array<{
     pair: string;
     profit: string;
     profitPercent: string;
@@ -44,6 +60,25 @@ interface PerformanceSectionProps {
 }
 
 export function PerformanceSection({ data }: PerformanceSectionProps) {
+  const [activeTab, setActiveTab] = useState<"crypto" | "forex">("crypto");
+
+  // Determine which strategies to show
+  const getStrategies = () => {
+    if (data.cryptoStrategies && data.forexStrategies) {
+      return activeTab === "crypto" ? data.cryptoStrategies : data.forexStrategies;
+    }
+    // Fallback to old strategies array if new structure not provided
+    if (data.strategies) {
+      if (data.strategies.some(s => s.category)) {
+        return data.strategies.filter(s => s.category === activeTab);
+      }
+      return data.strategies;
+    }
+    return [];
+  };
+
+  const currentStrategies = getStrategies();
+
   return (
     <div className="relative rounded-2xl bg-white border border-black/10 p-6 overflow-hidden min-h-[600px]">
       {/* Glowing sphere background - only on left side */}
@@ -88,10 +123,34 @@ export function PerformanceSection({ data }: PerformanceSectionProps) {
           </div>
         </div>
 
+        {/* Tab Buttons */}
+        <div className="flex gap-2 mb-4">
+          <button
+            onClick={() => setActiveTab("crypto")}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+              activeTab === "crypto"
+                ? "bg-yellow-400 text-slate-900 border-2 border-yellow-400"
+                : "bg-slate-100 text-slate-600 border-2 border-transparent hover:bg-slate-200"
+            }`}
+          >
+            Crypto
+          </button>
+          <button
+            onClick={() => setActiveTab("forex")}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+              activeTab === "forex"
+                ? "bg-yellow-400 text-slate-900 border-2 border-yellow-400"
+                : "bg-slate-100 text-slate-600 border-2 border-transparent hover:bg-slate-200"
+            }`}
+          >
+            Forex
+          </button>
+        </div>
+
         {/* Top Performing Strategies - Rounded Bordered Buttons */}
-        {data.strategies && data.strategies.length > 0 ? (
+        {currentStrategies && currentStrategies.length > 0 ? (
           <div className="flex flex-col gap-2 mb-6">
-            {data.strategies.map((strategy, index) => (
+            {currentStrategies.map((strategy, index) => (
               <button
                 key={index}
                 className="inline-flex items-center gap-2 rounded-lg border border-slate-200 hover:border-yellow-400 bg-white hover:bg-slate-50 transition-all duration-200 px-3 py-1.5 w-fit"

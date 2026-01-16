@@ -13,6 +13,19 @@ interface HomeTemplateProps {
       profit: string;
       profitPercent: string;
       performance: string;
+      category?: "crypto" | "forex";
+    }>;
+    cryptoStrategies?: Array<{
+      pair: string;
+      profit: string;
+      profitPercent: string;
+      performance: string;
+    }>;
+    forexStrategies?: Array<{
+      pair: string;
+      profit: string;
+      profitPercent: string;
+      performance: string;
     }>;
     metrics?: Array<{
       icon: React.ReactNode;

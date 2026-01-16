@@ -57,7 +57,7 @@ export default function HomePage() {
     total: "12,7898.00",
     period: "Past Week",
     change: "0.004567%",
-    strategies: [
+    cryptoStrategies: [
       {
         pair: "ETH/USDC",
         profit: "+$2,450.00",
@@ -75,6 +75,26 @@ export default function HomePage() {
         profit: "+$1,230.00",
         profitPercent: "+8.7%",
         performance: "Great Performance"
+      }
+    ],
+    forexStrategies: [
+      {
+        pair: "EUR/USD",
+        profit: "+$3,200.00",
+        profitPercent: "+15.2%",
+        performance: "Excellent"
+      },
+      {
+        pair: "GBP/USD",
+        profit: "+$1,850.00",
+        profitPercent: "+9.8%",
+        performance: "High Performance"
+      },
+      {
+        pair: "USD/JPY",
+        profit: "+$950.00",
+        profitPercent: "+6.4%",
+        performance: "Good Performance"
       }
     ],
     rightSidebar: rightSidebarData
