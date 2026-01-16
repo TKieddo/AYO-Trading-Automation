@@ -89,7 +89,7 @@ export function DecisionsFeed() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-white">
             <Brain className="w-5 h-5" />
-            AI Decisions
+            Agent Decisions
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -158,9 +158,9 @@ export function DecisionsFeed() {
   const displayDecisions = decisions.length > 0 ? decisions : demoDecisions;
 
   return (
-    <Card className="rounded-[24px] bg-lime-400/20 backdrop-blur-md border-lime-400/30">
+    <Card className="rounded-[24px]">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-white">
+        <CardTitle className="flex items-center gap-2">
           <Brain className="w-5 h-5" />
           AI Decisions
         </CardTitle>
@@ -168,7 +168,7 @@ export function DecisionsFeed() {
       <CardContent className="pb-0">
         <div className="relative max-h-[550px] overflow-y-auto pr-2">
           {/* Vertical timeline line */}
-          <div className="absolute left-3 inset-y-0 w-[2px] bg-lime-400/40"></div>
+          <div className="absolute left-3 inset-y-0 w-[2px] bg-slate-300"></div>
           <div className="space-y-0">
           {displayDecisions.map((decision, idx) => {
             const isBuy = decision.action === "buy";
@@ -178,20 +178,20 @@ export function DecisionsFeed() {
             return (
               <div key={decision.id} className="relative pl-8 py-3">
                 {/* Node connector */}
-                <div className="absolute left-[10px] top-4 h-3 w-3 rounded-full bg-lime-400 border-2 border-black/20"></div>
+                <div className="absolute left-[10px] top-4 h-3 w-3 rounded-full bg-slate-400 border-2 border-white"></div>
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="font-semibold text-white">
+                      <span className="font-semibold text-slate-900 dark:text-slate-100">
                         {decision.asset}
                       </span>
                       <span
                         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
                           isBuy
-                            ? "bg-green-500/30 text-green-200 border border-green-400/50"
+                            ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
                             : isSell
-                            ? "bg-red-500/30 text-red-200 border border-red-400/50"
-                            : "bg-slate-500/30 text-slate-200 border border-slate-400/50"
+                            ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                            : "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-400"
                         }`}
                       >
                         {isBuy && <ArrowUp className="w-3 h-3" />}
@@ -201,12 +201,12 @@ export function DecisionsFeed() {
                       </span>
                     </div>
                     {decision.allocationUsd && (
-                      <div className="text-sm text-lime-200/90 mb-1">
+                      <div className="text-sm text-slate-600 dark:text-slate-400 mb-1">
                         Allocation: {formatCurrency(decision.allocationUsd)}
                       </div>
                     )}
                     {(decision.tpPrice || decision.slPrice) && (
-                      <div className="flex gap-4 text-xs text-lime-300/80 mb-1">
+                      <div className="flex gap-4 text-xs text-slate-500 dark:text-slate-500 mb-1">
                         {decision.tpPrice && (
                           <span title="Take Profit: Price target to close position at a profit">
                             Target: {formatCurrency(decision.tpPrice)}
@@ -219,17 +219,17 @@ export function DecisionsFeed() {
                         )}
                       </div>
                     )}
-                    <p className="text-sm text-lime-200/80 mt-2 leading-relaxed">
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mt-2 leading-relaxed">
                       {formatRationale(decision.rationale, decision.reasoning, decision.action)}
                     </p>
                   </div>
-                  <div className="text-xs text-lime-300/70 flex-shrink-0">
+                  <div className="text-xs text-slate-500 dark:text-slate-500 flex-shrink-0">
                     {formatRelativeTime(decision.timestamp)}
                   </div>
                 </div>
                 {/* Thin separator */}
                 {idx < displayDecisions.length - 1 && (
-                  <div className="mt-3 border-b border-lime-400/20" />
+                  <div className="mt-3 border-b border-slate-200" />
                 )}
               </div>
             );
