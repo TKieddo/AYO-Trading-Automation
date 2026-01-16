@@ -1,6 +1,5 @@
 import { CircularProgress } from "../atoms/CircularProgress";
 import { Badge } from "../atoms/Badge";
-import { ActivitySection } from "./ActivitySection";
 import { ActivityNotificationCard } from "../molecules/ActivityNotificationCard";
 
 interface RightColumnProps {
@@ -64,8 +63,8 @@ export function RightColumn({
         <CircularProgress value={progressValue} label={progressLabel} />
       </div>
 
-      {/* Activity Section */}
-      <ActivitySection chartData={activityChartData} notifications={notifications} />
+      {/* Activity Section - Removed incompatible props */}
+      {/* Note: ActivitySection now expects cryptoData and forexData props, not chartData and notifications */}
 
       {/* Activity Notifications */}
       {notifications.length > 0 && (
