@@ -11,6 +11,7 @@ interface ConnectionStatus {
   wallet?: string;
   balance?: number;
   lastCheck?: string;
+  error?: string;
 }
 
 export function ConnectionStatus({ compact = false }: { compact?: boolean }) {
