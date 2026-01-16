@@ -1,6 +1,7 @@
 import { HomeTopbar } from "../organisms/HomeTopbar";
 import { PerformanceSection } from "../organisms/PerformanceSection";
 import { ExploreMarketsSection } from "../organisms/ExploreMarketsSection";
+import { RightSidebar } from "../organisms/RightSidebar";
 
 interface HomeTemplateProps {
   performanceData: {
@@ -52,10 +53,21 @@ export function HomeTemplate({
       <HomeTopbar />
       
       <main className="flex-1 p-6 grid grid-cols-12 gap-6 overflow-auto">
-        {/* Full Width Performance Section with Right Sidebar */}
-        <div className="col-span-12">
+        {/* Performance Section - Left Side Only */}
+        <div className="col-span-8">
           <PerformanceSection data={performanceData} />
         </div>
+
+        {/* Right Sidebar - Separate */}
+        {performanceData.rightSidebar && (
+          <div className="col-span-4">
+            <RightSidebar
+              nftImage={performanceData.rightSidebar.nftImage}
+              progressValue={performanceData.rightSidebar.progressValue}
+              progressLabel={performanceData.rightSidebar.progressLabel}
+            />
+          </div>
+        )}
 
         {/* Explore Markets Section */}
         <div className="col-span-12">
