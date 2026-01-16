@@ -344,12 +344,13 @@ export async function GET(req: NextRequest) {
               }
               
               if (activitiesToSave.length > 0) {
-                await sb.from("portfolio_activities").upsert(activitiesToSave, {
+                const { error } = await sb.from("portfolio_activities").upsert(activitiesToSave as any, {
                   onConflict: "income_id",
                   ignoreDuplicates: false,
-                }).catch((err) => {
-                  console.error("Error syncing trades to portfolio_activities:", err);
                 });
+                if (error) {
+                  console.error("Error syncing trades to portfolio_activities:", error);
+                }
                 console.log(`Synced ${activitiesToSave.length} trade activities to portfolio_activities`);
               }
             } catch (error: any) {

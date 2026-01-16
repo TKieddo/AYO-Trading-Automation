@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
     if (activitiesToSave.length > 0) {
       const { error: upsertError } = await sb
         .from("portfolio_activities")
-        .upsert(activitiesToSave, {
+        .upsert(activitiesToSave as any, {
           onConflict: "income_id",
           ignoreDuplicates: false,
         });

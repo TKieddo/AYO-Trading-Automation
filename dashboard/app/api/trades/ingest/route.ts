@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
         created_at: o.created_at ?? new Date().toISOString(),
         updated_at: o.updated_at ?? new Date().toISOString(),
       }));
-      if (mappedOrders.length) await sb.from("orders").upsert(mappedOrders, { onConflict: "order_id" });
+      if (mappedOrders.length) await sb.from("orders").upsert(mappedOrders as any, { onConflict: "order_id" });
     }
 
     if (trades.length) {
@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
             base = base + Number(t.pnl);
             return { date: t.executed_at, value: base, pnl: Number(t.pnl) };
           });
-        await sb.from("performance_series").upsert(series, { onConflict: "date" });
+        await sb.from("performance_series").upsert(series as any, { onConflict: "date" });
       }
     }
 

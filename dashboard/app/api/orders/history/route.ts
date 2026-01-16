@@ -482,7 +482,7 @@ export async function GET(req: NextRequest) {
         console.log(`Sample order to save:`, ordersToSave[0]);
         
           // Upsert orders by order_id (update if exists, insert if new)
-        const { data, error } = await sb.from("orders").upsert(ordersToSave, {
+        const { data, error } = await sb.from("orders").upsert(ordersToSave as any, {
             onConflict: "order_id",
           });
         
@@ -513,7 +513,7 @@ export async function GET(req: NextRequest) {
           updated_at: order.updatedAt || order.createdAt,
         }));
         
-        const { data, error } = await sb.from("orders").upsert(asterOrdersToSave, {
+        const { data, error } = await sb.from("orders").upsert(asterOrdersToSave as any, {
           onConflict: "order_id",
         });
         

@@ -11,7 +11,7 @@ export async function persistPrices(rows: any[]) {
       change_24h_percent: Number(r.change24hPercent ?? r.change_24h_percent ?? 0),
       timestamp: r.timestamp ?? new Date().toISOString(),
     }));
-    await supabase.from("prices").upsert(mapped, { onConflict: "symbol,timestamp" });
+    await supabase.from("prices").upsert(mapped as any, { onConflict: "symbol,timestamp" });
   } catch {}
 }
 
@@ -48,7 +48,7 @@ export async function persistPositions(rows: any[]) {
     }));
 
     // Upsert open positions
-    await supabase.from("positions").upsert(mapped, { onConflict: "id" });
+    await supabase.from("positions").upsert(mapped as any, { onConflict: "id" });
 
     // Get list of open position IDs to identify which ones to keep open
     const openPositionIds = new Set(mapped.map((p: any) => p.id));
@@ -108,7 +108,7 @@ export async function persistDecisions(rows: any[]) {
       reasoning: d.reasoning ?? "",
       timestamp: d.timestamp ?? new Date().toISOString(),
     }));
-    await supabase.from("decisions").upsert(mapped, { onConflict: "id" });
+    await supabase.from("decisions").upsert(mapped as any, { onConflict: "id" });
   } catch {}
 }
 
@@ -135,7 +135,7 @@ export async function persistPnl(rows: any[]) {
       daily_pnl: Number(r.daily_pnl ?? 0),
       cumulative_pnl: Number(r.cumulative_pnl ?? 0),
     }));
-    await supabase.from("pnl_series").upsert(mapped, { onConflict: "timestamp" });
+    await supabase.from("pnl_series").upsert(mapped as any, { onConflict: "timestamp" });
   } catch {}
 }
 
@@ -148,7 +148,7 @@ export async function persistPerformance(rows: any[]) {
       value: Number(r.value ?? 0),
       pnl: Number(r.pnl ?? 0),
     }));
-    await supabase.from("performance_series").upsert(mapped, { onConflict: "date" });
+    await supabase.from("performance_series").upsert(mapped as any, { onConflict: "date" });
   } catch {}
 }
 
@@ -224,7 +224,7 @@ export async function persistOrders(rows: any[]) {
     if (mapped.length === 0) return;
     
     // Upsert orders by order_id (prevents duplicates)
-    await supabase.from("orders").upsert(mapped, { 
+    await supabase.from("orders").upsert(mapped as any, { 
       onConflict: "order_id",
       ignoreDuplicates: false, // Update existing orders
     });

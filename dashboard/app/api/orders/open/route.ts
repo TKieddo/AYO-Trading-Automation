@@ -155,7 +155,7 @@ export async function GET(req: NextRequest) {
       if (sb && ordersToSave.length > 0) {
         try {
           // Upsert orders by order_id (update if exists, insert if new)
-          await sb.from("orders").upsert(ordersToSave, {
+          await sb.from("orders").upsert(ordersToSave as any, {
             onConflict: "order_id",
           });
           console.log(`Saved/updated ${ordersToSave.length} open orders to Supabase`);
