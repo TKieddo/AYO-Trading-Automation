@@ -54,14 +54,20 @@ export function HomeTemplate({
       <HomeTopbar />
       
       <main className="flex-1 p-6 grid grid-cols-12 gap-6 overflow-auto">
-        {/* Left Column - Performance & Explore Markets */}
-        <div className="col-span-7 flex flex-col gap-6">
+        {/* Full Width Performance Section */}
+        <div className="col-span-12">
           <PerformanceSection data={performanceData} />
+        </div>
+
+        {/* Left Column - Explore Markets */}
+        <div className="col-span-7 flex flex-col gap-6">
           <ExploreMarketsSection markets={marketsData} />
         </div>
 
         {/* Right Column */}
-        <RightColumn {...rightColumnData} />
+        <div className="col-span-5">
+          <RightColumn {...rightColumnData} />
+        </div>
       </main>
     </div>
   );

@@ -1,4 +1,4 @@
-import { PerformanceMetric } from "../molecules/PerformanceMetric";
+import { MetricIcon } from "../atoms/MetricIcon";
 
 interface PerformanceData {
   total: string;
@@ -59,17 +59,26 @@ export function PerformanceSection({ data }: PerformanceSectionProps) {
           </div>
         </div>
 
-        {/* Metric Cards */}
-        <div className="grid grid-cols-3 gap-4">
+        {/* Metric List - Horizontal Table Format */}
+        <div className="flex items-center gap-6">
           {data.metrics.map((metric, index) => (
-            <PerformanceMetric
-              key={index}
-              icon={metric.icon}
-              iconVariant={metric.iconVariant}
-              value={metric.value}
-              label={metric.label}
-              progress={metric.progress}
-            />
+            <div key={index} className="flex items-center gap-3 flex-1">
+              <MetricIcon variant={metric.iconVariant}>
+                {metric.icon}
+              </MetricIcon>
+              <div className="flex-1">
+                <div className="text-white font-semibold text-lg mb-1">{metric.value}</div>
+                <div className="text-gray-400 text-xs">{metric.label}</div>
+                {metric.progress !== undefined && (
+                  <div className="h-1 bg-gray-700 rounded-full overflow-hidden mt-2">
+                    <div 
+                      className="h-full bg-white transition-all duration-300" 
+                      style={{ width: `${metric.progress}%` }}
+                    ></div>
+                  </div>
+                )}
+              </div>
+            </div>
           ))}
         </div>
       </div>
