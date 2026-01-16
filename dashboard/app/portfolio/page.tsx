@@ -27,11 +27,11 @@ async function fetchPortfolioData() {
       base = process.env.NEXT_PUBLIC_BASE_URL.replace(/\/$/, "");
     } else {
       // Fallback to headers if available
-  const h = headers();
+      const h = await headers();
       // Check if headers() returns a Headers-like object
       if (h && typeof h.get === "function") {
-  const host = h.get("host") || "localhost:3001";
-  const proto = h.get("x-forwarded-proto") || (host.startsWith("localhost") ? "http" : "https");
+        const host = h.get("host") || "localhost:3001";
+        const proto = h.get("x-forwarded-proto") || (host.startsWith("localhost") ? "http" : "https");
         base = `${proto}://${host}`;
       } else {
         // Final fallback
