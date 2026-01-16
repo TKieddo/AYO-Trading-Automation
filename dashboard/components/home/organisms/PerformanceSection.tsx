@@ -52,7 +52,7 @@ export function PerformanceSection({ data }: PerformanceSectionProps) {
       
       <div className="relative z-10">
         {/* Performance Header - Bordered Container */}
-        <div className="rounded-lg border border-slate-200 p-4 mb-4">
+        <div className="inline-block rounded-lg border border-slate-200 p-4 mb-4 w-fit">
           <div className="flex items-center gap-2 mb-3">
             <h2 className="text-slate-900 text-base font-semibold">Performance</h2>
             <svg className="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
