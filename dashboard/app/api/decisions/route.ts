@@ -12,9 +12,9 @@ export async function GET(request: NextRequest) {
     // Fetch from Python agent's /diary endpoint
     const data = await fetchJsonWithRetry<any>(
       `${BASE}/agent/diary?limit=${limit}`,
-      { timeoutMs: 30000, cache: "no-store" },
-      2,
-      300
+      { timeoutMs: 5000, cache: "no-store" },
+      1,
+      100
     );
 
     // Python API returns {entries: [...]}, transform to Decision type
@@ -44,9 +44,15 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(decisions);
   } catch (error: any) {
     // Silently handle connection errors - Python agent may not be running
-    if (error.code !== 'ECONNREFUSED' && !error.message?.includes('fetch failed')) {
+    // Only log non-connection errors in development
+    const isConnectionError = error.code === 'ECONNREFUSED' || 
+                            error.message?.includes('fetch failed') ||
+                            error.message?.includes('ECONNREFUSED');
+    
+    if (!isConnectionError && process.env.NODE_ENV === 'development') {
       console.error("Failed to fetch decisions from Python API:", error);
     }
+    
     const cached = cacheGet<any[]>("decisions");
     if (cached) return NextResponse.json(cached);
     // Continue to Supabase fallback
@@ -78,10 +84,18 @@ export async function GET(request: NextRequest) {
       }));
       return NextResponse.json(transformed);
     }
-  } catch (e) {
-    console.error("Failed to fetch decisions from Supabase:", e);
+  } catch (e: any) {
+    // Silently handle Supabase connection errors
+    const isConnectionError = e.code === 'ECONNREFUSED' || 
+                              e.message?.includes('fetch failed') ||
+                              e.message?.includes('ECONNREFUSED');
+    
+    if (!isConnectionError && process.env.NODE_ENV === 'development') {
+      console.error("Failed to fetch decisions from Supabase:", e);
+    }
   }
 
-  return NextResponse.json([], { status: 500 });
+  // Return empty array instead of 500 error - component will show demo data
+  return NextResponse.json([]);
 }
 

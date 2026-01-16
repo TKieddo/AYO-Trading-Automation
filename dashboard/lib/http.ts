@@ -22,13 +22,17 @@ export async function fetchJsonWithRetry<T = any>(
       const resp = await fetchWithTimeout(input, init);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       return (await resp.json()) as T;
-    } catch (e) {
+    } catch (e: any) {
       lastError = e;
-      if (attempt < retries) {
-        await new Promise((r) => setTimeout(r, backoffMs * (attempt + 1)));
-        continue;
+      // Don't retry on connection refused errors
+      const isConnectionError = e.code === 'ECONNREFUSED' || 
+                                e.name === 'AbortError' ||
+                                e.message?.includes('fetch failed') ||
+                                e.message?.includes('ECONNREFUSED');
+      if (isConnectionError || attempt >= retries) {
+        throw lastError;
       }
-      throw lastError;
+      await new Promise((r) => setTimeout(r, backoffMs * (attempt + 1)));
     }
   }
   throw lastError;
