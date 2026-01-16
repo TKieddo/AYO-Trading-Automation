@@ -3,6 +3,7 @@ import { PerformanceSection } from "../organisms/PerformanceSection";
 import { ExploreMarketsSection } from "../organisms/ExploreMarketsSection";
 import { RightSidebar } from "../organisms/RightSidebar";
 import { PatternBackground } from "../atoms/PatternBackground";
+import { HeroBottomEdge } from "../atoms/HeroBottomEdge";
 
 interface HomeTemplateProps {
   performanceData: {
@@ -71,11 +72,14 @@ export function HomeTemplate({
   return (
     <div className="min-h-screen bg-[#e8eaec] flex flex-col">
       {/* Hero Section - Full width, pure black with pattern background */}
-      <div className="relative w-full bg-black">
+      <div className="relative w-full bg-black overflow-hidden">
         {/* Pattern background for entire hero section */}
         <div className="absolute inset-0">
           <PatternBackground />
         </div>
+        
+        {/* Decorative bottom edge */}
+        <HeroBottomEdge />
         
         {/* Topbar - Dark themed */}
         <div className="relative z-20">
@@ -83,7 +87,7 @@ export function HomeTemplate({
         </div>
         
         {/* Hero content */}
-        <div className="relative z-10 grid grid-cols-12 gap-6 p-6 pt-6">
+        <div className="relative z-10 grid grid-cols-12 gap-6 p-6 pt-6 pb-24">
           {/* Performance Section - Left Side Only */}
           <div className="col-span-8">
             <PerformanceSection data={performanceData} />
