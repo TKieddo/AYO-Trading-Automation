@@ -127,10 +127,11 @@ export function PatternBackground() {
         <text x="320" y="460" fontSize="10" fill="#84cc16" fontFamily="monospace" opacity="0.18">%</text>
       </svg>
       
-      {/* Enhanced glow effects */}
-      <div className="absolute top-0 right-0 w-80 h-80 bg-lime-400/8 rounded-full blur-3xl"></div>
-      <div className="absolute bottom-0 left-0 w-60 h-60 bg-lime-500/8 rounded-full blur-2xl"></div>
-      <div className="absolute top-1/2 right-1/4 w-40 h-40 bg-lime-300/6 rounded-full blur-xl"></div>
+      {/* Enhanced glow effects - MORE VISIBLE */}
+      <div className="absolute top-0 right-0 w-80 h-80 bg-lime-400/15 rounded-full blur-3xl"></div>
+      <div className="absolute bottom-0 left-0 w-60 h-60 bg-lime-500/15 rounded-full blur-2xl"></div>
+      <div className="absolute top-1/2 right-1/4 w-40 h-40 bg-lime-300/12 rounded-full blur-xl"></div>
+      <div className="absolute top-1/3 left-1/3 w-50 h-50 bg-lime-400/10 rounded-full blur-2xl"></div>
     </div>
   );
 }

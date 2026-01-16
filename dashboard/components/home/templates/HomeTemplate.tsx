@@ -70,43 +70,44 @@ export function HomeTemplate({
 }: HomeTemplateProps) {
   return (
     <div className="min-h-screen bg-[#e8eaec] flex flex-col">
-      <HomeTopbar />
-      
-      <main className="flex-1 p-6 grid grid-cols-12 gap-6 overflow-auto">
-        {/* Hero Section - Dark themed with pattern background */}
-        <div className="col-span-12 relative rounded-2xl overflow-hidden">
-          {/* Pattern background for entire hero section */}
-          <div className="absolute inset-0">
-            <PatternBackground />
+      {/* Hero Section - Full width, dark themed with pattern background */}
+      <div className="relative w-full">
+        {/* Pattern background for entire hero section */}
+        <div className="absolute inset-0">
+          <PatternBackground />
+        </div>
+        
+        {/* Dark overlay - less opaque to show pattern */}
+        <div className="absolute inset-0 bg-gradient-to-br from-black via-slate-900 to-black"></div>
+        
+        {/* Topbar - Dark themed */}
+        <div className="relative z-20">
+          <HomeTopbar />
+        </div>
+        
+        {/* Hero content */}
+        <div className="relative z-10 grid grid-cols-12 gap-6 p-6 pt-6">
+          {/* Performance Section - Left Side Only */}
+          <div className="col-span-8">
+            <PerformanceSection data={performanceData} />
           </div>
-          
-          {/* Dark overlay */}
-          <div className="absolute inset-0 bg-gradient-to-br from-black/95 via-slate-900/98 to-black/95 rounded-2xl"></div>
-          
-          {/* Hero content */}
-          <div className="relative z-10 grid grid-cols-12 gap-6 p-6">
-            {/* Performance Section - Left Side Only */}
-            <div className="col-span-8">
-              <PerformanceSection data={performanceData} />
+
+          {/* Right Sidebar - Separate */}
+          {performanceData.rightSidebar && (
+            <div className="col-span-4">
+              <RightSidebar
+                nftImage={performanceData.rightSidebar.nftImage}
+                progressValue={performanceData.rightSidebar.progressValue}
+                progressLabel={performanceData.rightSidebar.progressLabel}
+              />
             </div>
-
-            {/* Right Sidebar - Separate */}
-            {performanceData.rightSidebar && (
-              <div className="col-span-4">
-                <RightSidebar
-                  nftImage={performanceData.rightSidebar.nftImage}
-                  progressValue={performanceData.rightSidebar.progressValue}
-                  progressLabel={performanceData.rightSidebar.progressLabel}
-                />
-              </div>
-            )}
-          </div>
+          )}
         </div>
-
-        {/* Explore Markets Section - Full Width (separate, white) */}
-        <div className="col-span-12">
-          <ExploreMarketsSection markets={marketsData} />
-        </div>
+      </div>
+      
+      {/* Explore Markets Section - Full Width (separate, white) */}
+      <main className="flex-1 p-6">
+        <ExploreMarketsSection markets={marketsData} />
       </main>
     </div>
   );
