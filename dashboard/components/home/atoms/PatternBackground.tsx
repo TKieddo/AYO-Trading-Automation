@@ -1,97 +1,130 @@
 export function PatternBackground() {
-  // Generate symbol patterns
-  const symbols = ['X', 'O', '+', '/', '\\', ':', '-', '□'];
+  // Crypto/trading symbols and elements
+  const symbols = ['X', 'O', '+', '/', '\\', ':', '-', '□', '▲', '▼', '●', '■'];
+  const cryptoPairs = ['BTC', 'ETH', 'SOL', 'USDT', 'BNB', 'ADA', 'XRP', 'DOGE'];
+  const numbers = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
   
   return (
     <div className="absolute inset-0 overflow-hidden rounded-2xl pointer-events-none">
-      {/* Base gradient overlay */}
-      <div className="absolute inset-0 bg-gradient-to-br from-slate-900/5 via-transparent to-slate-800/10"></div>
-      
-      {/* SVG Pattern Layer */}
+      {/* SVG Pattern Layer - More visible */}
       <svg 
-        className="absolute inset-0 w-full h-full opacity-[0.15]"
-        viewBox="0 0 400 600"
+        className="absolute inset-0 w-full h-full"
+        viewBox="0 0 500 700"
         preserveAspectRatio="none"
         xmlns="http://www.w3.org/2000/svg"
       >
         <defs>
-          <pattern id="symbolPattern" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
-            {/* Random symbols in grid */}
-            <text x="5" y="15" fontSize="8" fill="#84cc16" fontFamily="monospace" fontWeight="bold">X</text>
-            <text x="25" y="25" fontSize="6" fill="#84cc16" fontFamily="monospace" opacity="0.7">O</text>
-            <text x="15" y="35" fontSize="7" fill="#84cc16" fontFamily="monospace" opacity="0.6">+</text>
-          </pattern>
-          
-          <pattern id="symbolPattern2" x="0" y="0" width="60" height="60" patternUnits="userSpaceOnUse">
-            <text x="10" y="20" fontSize="10" fill="#84cc16" fontFamily="monospace" fontWeight="bold" opacity="0.8">/</text>
-            <text x="35" y="35" fontSize="8" fill="#84cc16" fontFamily="monospace" opacity="0.5">\</text>
-            <text x="20" y="50" fontSize="9" fill="#84cc16" fontFamily="monospace" opacity="0.6">:</text>
-          </pattern>
-          
-          <pattern id="geometricPattern" x="0" y="0" width="80" height="80" patternUnits="userSpaceOnUse">
-            <rect x="10" y="10" width="12" height="12" fill="none" stroke="#84cc16" strokeWidth="1" opacity="0.4" />
-            <circle cx="45" cy="25" r="4" fill="#84cc16" opacity="0.3" />
-            <line x1="20" y1="50" x2="30" y2="60" stroke="#84cc16" strokeWidth="1" opacity="0.4" />
-            <line x1="50" y1="50" x2="60" y2="60" stroke="#84cc16" strokeWidth="1" opacity="0.4" />
-          </pattern>
+          {/* Gradient for depth */}
+          <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#84cc16" stopOpacity="0.03" />
+            <stop offset="50%" stopColor="#84cc16" stopOpacity="0.01" />
+            <stop offset="100%" stopColor="#84cc16" stopOpacity="0.04" />
+          </linearGradient>
         </defs>
         
-        {/* Large geometric blocks - right side */}
-        <rect x="280" y="50" width="80" height="120" fill="#84cc16" opacity="0.08" rx="4" />
-        <rect x="320" y="200" width="60" height="100" fill="#84cc16" opacity="0.06" rx="3" />
-        <rect x="300" y="450" width="90" height="80" fill="#84cc16" opacity="0.07" rx="4" />
+        {/* Base gradient fill */}
+        <rect width="100%" height="100%" fill="url(#bgGradient)" />
         
-        {/* Bottom left block */}
-        <rect x="20" y="480" width="70" height="100" fill="#84cc16" opacity="0.08" rx="4" />
+        {/* Large geometric blocks - right side (more visible) */}
+        <rect x="320" y="40" width="100" height="140" fill="#84cc16" opacity="0.12" rx="6" />
+        <rect x="360" y="220" width="80" height="120" fill="#84cc16" opacity="0.10" rx="5" />
+        <rect x="340" y="420" width="110" height="100" fill="#84cc16" opacity="0.11" rx="6" />
+        <rect x="380" y="550" width="70" height="90" fill="#84cc16" opacity="0.09" rx="4" />
         
-        {/* Pattern fills */}
-        <rect width="100%" height="100%" fill="url(#symbolPattern)" />
-        <rect width="100%" height="100%" fill="url(#symbolPattern2)" opacity="0.5" />
-        <rect width="100%" height="100%" fill="url(#geometricPattern)" opacity="0.3" />
+        {/* Bottom left blocks */}
+        <rect x="20" y="480" width="90" height="120" fill="#84cc16" opacity="0.12" rx="6" />
+        <rect x="40" y="580" width="60" height="80" fill="#84cc16" opacity="0.10" rx="4" />
         
-        {/* Scattered symbols */}
-        <text x="50" y="80" fontSize="14" fill="#84cc16" fontFamily="monospace" fontWeight="bold" opacity="0.2">X</text>
-        <text x="150" y="120" fontSize="12" fill="#84cc16" fontFamily="monospace" opacity="0.15">O</text>
-        <text x="200" y="180" fontSize="16" fill="#84cc16" fontFamily="monospace" fontWeight="bold" opacity="0.18">+</text>
-        <text x="100" y="250" fontSize="10" fill="#84cc16" fontFamily="monospace" opacity="0.12">/</text>
-        <text x="250" y="300" fontSize="13" fill="#84cc16" fontFamily="monospace" opacity="0.16">\</text>
-        <text x="80" y="350" fontSize="11" fill="#84cc16" fontFamily="monospace" opacity="0.14">:</text>
-        <text x="180" y="400" fontSize="15" fill="#84cc16" fontFamily="monospace" fontWeight="bold" opacity="0.2">X</text>
-        <text x="120" y="500" fontSize="12" fill="#84cc16" fontFamily="monospace" opacity="0.15">O</text>
-        <text x="220" y="550" fontSize="14" fill="#84cc16" fontFamily="monospace" fontWeight="bold" opacity="0.17">+</text>
+        {/* Crypto pair labels scattered */}
+        <text x="60" y="70" fontSize="11" fill="#84cc16" fontFamily="monospace" fontWeight="bold" opacity="0.25">BTC</text>
+        <text x="180" y="110" fontSize="10" fill="#84cc16" fontFamily="monospace" opacity="0.22">ETH</text>
+        <text x="250" y="160" fontSize="12" fill="#84cc16" fontFamily="monospace" fontWeight="bold" opacity="0.28">SOL</text>
+        <text x="120" y="240" fontSize="9" fill="#84cc16" fontFamily="monospace" opacity="0.20">USDT</text>
+        <text x="280" y="280" fontSize="11" fill="#84cc16" fontFamily="monospace" opacity="0.24">BNB</text>
+        <text x="90" y="340" fontSize="10" fill="#84cc16" fontFamily="monospace" opacity="0.21">XRP</text>
+        <text x="200" y="390" fontSize="13" fill="#84cc16" fontFamily="monospace" fontWeight="bold" opacity="0.26">ADA</text>
+        <text x="140" y="500" fontSize="10" fill="#84cc16" fontFamily="monospace" opacity="0.23">DOGE</text>
         
-        {/* Dense symbol clusters */}
-        <g opacity="0.1">
-          <text x="320" y="100" fontSize="8" fill="#84cc16" fontFamily="monospace">X</text>
-          <text x="335" y="100" fontSize="8" fill="#84cc16" fontFamily="monospace">O</text>
-          <text x="350" y="100" fontSize="8" fill="#84cc16" fontFamily="monospace">+</text>
-          <text x="365" y="100" fontSize="8" fill="#84cc16" fontFamily="monospace">/</text>
+        {/* Price-like numbers scattered */}
+        <text x="350" y="100" fontSize="9" fill="#84cc16" fontFamily="monospace" opacity="0.18">$42,150</text>
+        <text x="50" y="200" fontSize="8" fill="#84cc16" fontFamily="monospace" opacity="0.16">$2,850</text>
+        <text x="220" y="320" fontSize="10" fill="#84cc16" fontFamily="monospace" opacity="0.20">$98.50</text>
+        <text x="100" y="450" fontSize="9" fill="#84cc16" fontFamily="monospace" opacity="0.17">$0.52</text>
+        <text x="300" y="520" fontSize="8" fill="#84cc16" fontFamily="monospace" opacity="0.15">$315</text>
+        
+        {/* Scattered symbols - varied sizes and positions */}
+        <text x="45" y="85" fontSize="16" fill="#84cc16" fontFamily="monospace" fontWeight="bold" opacity="0.30">X</text>
+        <text x="160" y="130" fontSize="13" fill="#84cc16" fontFamily="monospace" opacity="0.25">O</text>
+        <text x="230" y="190" fontSize="18" fill="#84cc16" fontFamily="monospace" fontWeight="bold" opacity="0.32">+</text>
+        <text x="110" y="260" fontSize="11" fill="#84cc16" fontFamily="monospace" opacity="0.22">/</text>
+        <text x="270" y="310" fontSize="14" fill="#84cc16" fontFamily="monospace" opacity="0.26">\</text>
+        <text x="85" y="360" fontSize="12" fill="#84cc16" fontFamily="monospace" opacity="0.24">:</text>
+        <text x="190" y="410" fontSize="17" fill="#84cc16" fontFamily="monospace" fontWeight="bold" opacity="0.28">▲</text>
+        <text x="130" y="510" fontSize="13" fill="#84cc16" fontFamily="monospace" opacity="0.25">▼</text>
+        <text x="240" y="560" fontSize="15" fill="#84cc16" fontFamily="monospace" fontWeight="bold" opacity="0.27">●</text>
+        <text x="360" y="180" fontSize="12" fill="#84cc16" fontFamily="monospace" opacity="0.23">■</text>
+        <text x="70" y="300" fontSize="14" fill="#84cc16" fontFamily="monospace" opacity="0.26">+</text>
+        
+        {/* Dense symbol clusters - varied */}
+        <g opacity="0.20">
+          <text x="330" y="120" fontSize="9" fill="#84cc16" fontFamily="monospace" fontWeight="bold">X</text>
+          <text x="345" y="120" fontSize="8" fill="#84cc16" fontFamily="monospace">O</text>
+          <text x="360" y="120" fontSize="10" fill="#84cc16" fontFamily="monospace" fontWeight="bold">+</text>
+          <text x="375" y="120" fontSize="9" fill="#84cc16" fontFamily="monospace">/</text>
+          <text x="390" y="120" fontSize="8" fill="#84cc16" fontFamily="monospace">\</text>
         </g>
         
-        <g opacity="0.12">
-          <text x="30" y="200" fontSize="7" fill="#84cc16" fontFamily="monospace">X</text>
-          <text x="40" y="200" fontSize="7" fill="#84cc16" fontFamily="monospace">O</text>
-          <text x="50" y="200" fontSize="7" fill="#84cc16" fontFamily="monospace">X</text>
-          <text x="60" y="200" fontSize="7" fill="#84cc16" fontFamily="monospace">O</text>
+        <g opacity="0.22">
+          <text x="30" y="220" fontSize="8" fill="#84cc16" fontFamily="monospace" fontWeight="bold">X</text>
+          <text x="42" y="220" fontSize="7" fill="#84cc16" fontFamily="monospace">O</text>
+          <text x="54" y="220" fontSize="8" fill="#84cc16" fontFamily="monospace" fontWeight="bold">X</text>
+          <text x="66" y="220" fontSize="7" fill="#84cc16" fontFamily="monospace">O</text>
+          <text x="78" y="220" fontSize="8" fill="#84cc16" fontFamily="monospace">+</text>
         </g>
         
-        {/* Circuit-like lines */}
-        <g stroke="#84cc16" strokeWidth="1" opacity="0.08" fill="none">
-          <path d="M 50 100 L 150 120 L 200 80 L 250 100" />
-          <path d="M 100 300 L 180 280 L 220 320 L 280 300" />
-          <path d="M 150 450 L 200 430 L 250 470 L 300 450" />
+        <g opacity="0.18">
+          <text x="380" y="350" fontSize="9" fill="#84cc16" fontFamily="monospace">▲</text>
+          <text x="395" y="350" fontSize="8" fill="#84cc16" fontFamily="monospace">▼</text>
+          <text x="410" y="350" fontSize="9" fill="#84cc16" fontFamily="monospace">●</text>
+          <text x="425" y="350" fontSize="8" fill="#84cc16" fontFamily="monospace">■</text>
         </g>
         
-        {/* Small geometric shapes */}
-        <rect x="350" y="150" width="8" height="8" fill="#84cc16" opacity="0.15" />
-        <rect x="70" y="280" width="10" height="10" fill="#84cc16" opacity="0.12" />
-        <circle cx="180" cy="380" r="5" fill="#84cc16" opacity="0.14" />
-        <circle cx="280" cy="420" r="4" fill="#84cc16" opacity="0.13" />
+        {/* Circuit-like connecting lines (more visible) */}
+        <g stroke="#84cc16" strokeWidth="1.5" opacity="0.15" fill="none">
+          <path d="M 50 100 L 150 125 L 200 85 L 250 105 L 300 95" />
+          <path d="M 100 300 L 180 285 L 220 325 L 280 305 L 340 295" />
+          <path d="M 150 450 L 200 435 L 250 475 L 300 455 L 360 445" />
+          <path d="M 80 200 L 120 180 L 160 220" />
+        </g>
+        
+        {/* Trading chart-like elements */}
+        <g stroke="#84cc16" strokeWidth="2" opacity="0.12" fill="none">
+          {/* Candlestick-like shapes */}
+          <line x1="380" y1="250" x2="380" y2="280" />
+          <rect x="375" y="250" width="10" height="8" fill="#84cc16" opacity="0.10" />
+          <line x1="420" y1="380" x2="420" y2="410" />
+          <rect x="415" y="380" width="10" height="12" fill="#84cc16" opacity="0.10" />
+        </g>
+        
+        {/* Small geometric shapes - varied */}
+        <rect x="360" y="160" width="10" height="10" fill="#84cc16" opacity="0.22" rx="2" />
+        <rect x="75" y="290" width="12" height="12" fill="#84cc16" opacity="0.20" rx="2" />
+        <circle cx="185" cy="385" r="6" fill="#84cc16" opacity="0.24" />
+        <circle cx="285" cy="430" r="5" fill="#84cc16" opacity="0.21" />
+        <rect x="400" y="480" width="8" height="8" fill="#84cc16" opacity="0.19" rx="1" />
+        <circle cx="55" cy="540" r="4" fill="#84cc16" opacity="0.18" />
+        
+        {/* Percentage signs scattered */}
+        <text x="170" y="150" fontSize="10" fill="#84cc16" fontFamily="monospace" opacity="0.19">%</text>
+        <text x="290" y="240" fontSize="9" fill="#84cc16" fontFamily="monospace" opacity="0.17">%</text>
+        <text x="150" y="380" fontSize="11" fill="#84cc16" fontFamily="monospace" opacity="0.21">%</text>
+        <text x="320" y="460" fontSize="10" fill="#84cc16" fontFamily="monospace" opacity="0.18">%</text>
       </svg>
       
-      {/* Subtle glow effects */}
-      <div className="absolute top-0 right-0 w-64 h-64 bg-lime-400/5 rounded-full blur-3xl"></div>
-      <div className="absolute bottom-0 left-0 w-48 h-48 bg-lime-500/5 rounded-full blur-2xl"></div>
+      {/* Enhanced glow effects */}
+      <div className="absolute top-0 right-0 w-80 h-80 bg-lime-400/8 rounded-full blur-3xl"></div>
+      <div className="absolute bottom-0 left-0 w-60 h-60 bg-lime-500/8 rounded-full blur-2xl"></div>
+      <div className="absolute top-1/2 right-1/4 w-40 h-40 bg-lime-300/6 rounded-full blur-xl"></div>
     </div>
   );
 }
