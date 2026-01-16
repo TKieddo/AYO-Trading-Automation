@@ -68,16 +68,10 @@ export function HomeTemplate({
   marketsData
 }: HomeTemplateProps) {
   return (
-    <div className="min-h-screen bg-[#00000a] flex flex-col relative">
-      {/* Background image covering entire hero section */}
-      <div 
-        className="absolute inset-0 bg-cover bg-center bg-no-repeat z-0"
-        style={{ backgroundImage: 'url(/hero-backgroung.jpg)' }}
-      ></div>
-      
+    <div className="min-h-screen bg-[#e8eaec] flex flex-col">
       <HomeTopbar />
       
-      <main className="flex-1 p-6 grid grid-cols-12 gap-6 overflow-auto relative z-10">
+      <main className="flex-1 p-6 grid grid-cols-12 gap-6 overflow-auto">
         {/* Performance Section - Left Side Only */}
         <div className="col-span-8">
           <PerformanceSection data={performanceData} />

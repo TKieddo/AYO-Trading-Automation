@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { MetricIcon } from "../atoms/MetricIcon";
 import { ActivitySection } from "./ActivitySection";
+import { PatternBackground } from "../atoms/PatternBackground";
 
 interface PerformanceData {
   total: string;
@@ -94,7 +95,13 @@ export function PerformanceSection({ data }: PerformanceSectionProps) {
   const currentStrategies = getStrategies();
 
   return (
-    <div className="relative rounded-2xl border border-black/10 p-6 overflow-hidden min-h-[600px] bg-white/10 backdrop-blur-sm">
+    <div className="relative rounded-2xl bg-white border border-black/10 p-6 overflow-hidden min-h-[600px]">
+      {/* Artistic Pattern Background */}
+      <PatternBackground />
+      
+      {/* Subtle gradient overlay for depth */}
+      <div className="absolute inset-0 bg-gradient-to-br from-white/60 via-white/40 to-white/50 rounded-2xl z-0"></div>
+      
       <div className="relative z-10">
         {/* Performance Header - Bordered Container */}
         <div className="inline-block rounded-lg border border-slate-200 p-3 mb-3 w-fit">
