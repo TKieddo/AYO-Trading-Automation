@@ -149,7 +149,7 @@ export function PerformanceSection({ data }: PerformanceSectionProps) {
 
         {/* Top Performing Strategies - Rounded Bordered Buttons */}
         {currentStrategies && currentStrategies.length > 0 ? (
-          <div className="flex flex-col gap-2 mb-6">
+          <div className="flex flex-col gap-2 mb-6 items-center">
             {currentStrategies.map((strategy, index) => (
               <button
                 key={index}
