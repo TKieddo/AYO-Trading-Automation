@@ -32,8 +32,8 @@ export function ActivitySection({
   };
 
   return (
-    <div className="rounded-2xl bg-white border border-black/10 p-4">
-      <h2 className="text-slate-900 text-base font-semibold mb-2">Profit & Loss Over Time</h2>
+    <div className="rounded-2xl bg-black/20 backdrop-blur-sm border border-lime-400/30 p-4">
+      <h2 className="text-white text-base font-semibold mb-2">Profit & Loss Over Time</h2>
       
       <ToggleButtons
         options={["Crypto", "Forex"]}

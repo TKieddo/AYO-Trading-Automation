@@ -31,17 +31,17 @@ export function BarChart({
     <div>
       {title && (
         <div className="flex items-center justify-between mb-1">
-          <span className="text-slate-500 text-[10px]">{title}</span>
-          {maxValue && <span className="text-slate-900 text-[10px] font-semibold">{maxValue}</span>}
+          <span className="text-lime-300/70 text-[10px]">{title}</span>
+          {maxValue && <span className="text-white text-[10px] font-semibold">{maxValue}</span>}
         </div>
       )}
       {showProfitLoss && (highValue !== undefined || lowValue !== undefined) && (
         <div className="flex items-center justify-between mb-1 text-[9px]">
           {highValue !== undefined && (
-            <span className="text-lime-600 font-medium">High: ${highValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            <span className="text-lime-400 font-medium">High: ${highValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
           )}
           {lowValue !== undefined && (
-            <span className="text-orange-600 font-medium">Low: ${lowValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            <span className="text-orange-400 font-medium">Low: ${lowValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
           )}
         </div>
       )}
@@ -99,7 +99,7 @@ export function BarChart({
                   style={{ height: `${barHeight}%` }}
                 ></div>
               )}
-              <span className="text-slate-500 text-[8px] text-center leading-tight absolute bottom-0">{labels[index]}</span>
+              <span className="text-lime-300/60 text-[8px] text-center leading-tight absolute bottom-0">{labels[index]}</span>
             </div>
           );
         })}

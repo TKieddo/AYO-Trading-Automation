@@ -5,7 +5,7 @@ export function PatternBackground() {
   const numbers = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
   
   return (
-    <div className="absolute inset-0 overflow-hidden rounded-2xl pointer-events-none">
+    <div className="absolute inset-0 overflow-hidden pointer-events-none">
       {/* SVG Pattern Layer - More visible */}
       <svg 
         className="absolute inset-0 w-full h-full"
@@ -44,6 +44,12 @@ export function PatternBackground() {
         <text x="90" y="340" fontSize="10" fill="#84cc16" fontFamily="monospace" opacity="0.21">XRP</text>
         <text x="200" y="390" fontSize="13" fill="#84cc16" fontFamily="monospace" fontWeight="bold" opacity="0.26">ADA</text>
         <text x="140" y="500" fontSize="10" fill="#84cc16" fontFamily="monospace" opacity="0.23">DOGE</text>
+        
+        {/* Brand name and Forex */}
+        <text x="220" y="80" fontSize="16" fill="#84cc16" fontFamily="monospace" fontWeight="bold" opacity="0.30">AYO</text>
+        <text x="320" y="140" fontSize="14" fill="#84cc16" fontFamily="monospace" fontWeight="bold" opacity="0.28">FOREX</text>
+        <text x="50" y="420" fontSize="15" fill="#84cc16" fontFamily="monospace" fontWeight="bold" opacity="0.27">AYO</text>
+        <text x="380" y="480" fontSize="13" fill="#84cc16" fontFamily="monospace" fontWeight="bold" opacity="0.25">FOREX</text>
         
         {/* Price-like numbers scattered */}
         <text x="350" y="100" fontSize="9" fill="#84cc16" fontFamily="monospace" opacity="0.18">$42,150</text>

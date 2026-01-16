@@ -12,15 +12,15 @@ export function ToggleButtons<T extends string>({
   onSelect 
 }: ToggleButtonsProps<T>) {
   return (
-    <div className="flex gap-1 bg-slate-100 rounded-md p-0.5">
+    <div className="flex gap-1 bg-black/30 border border-lime-400/20 rounded-md p-0.5">
       {options.map((option) => (
         <button
           key={option}
           onClick={() => onSelect(option)}
           className={`flex-1 px-2 py-1 rounded-sm text-xs font-medium transition-colors ${
             selected === option
-              ? "bg-white text-slate-900 shadow-sm"
-              : "text-slate-600"
+              ? "bg-lime-400 text-black shadow-sm"
+              : "text-lime-300/70 hover:text-lime-400"
           }`}
         >
           {option}
