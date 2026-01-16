@@ -94,13 +94,7 @@ export function PerformanceSection({ data }: PerformanceSectionProps) {
   const currentStrategies = getStrategies();
 
   return (
-    <div className="relative rounded-2xl border border-black/10 p-6 overflow-hidden min-h-[600px]">
-      {/* Background image */}
-      <div 
-        className="absolute inset-0 bg-cover bg-center bg-no-repeat rounded-2xl z-0"
-        style={{ backgroundImage: 'url(/hero-backgroung.jpg)' }}
-      ></div>
-      
+    <div className="relative rounded-2xl border border-black/10 p-6 overflow-hidden min-h-[600px] bg-white/10 backdrop-blur-sm">
       <div className="relative z-10">
         {/* Performance Header - Bordered Container */}
         <div className="inline-block rounded-lg border border-slate-200 p-3 mb-3 w-fit">
