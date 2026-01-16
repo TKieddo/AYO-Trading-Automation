@@ -12,9 +12,9 @@ export function RightSidebar({
   progressLabel = "WETH/USDC"
 }: RightSidebarProps) {
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 h-full">
       {/* AI Decisions */}
-      <div className="rounded-xl">
+      <div className="rounded-xl min-h-[600px]">
         <DecisionsFeed />
       </div>
     </div>

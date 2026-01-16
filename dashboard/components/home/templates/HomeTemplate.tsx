@@ -2,6 +2,7 @@ import { HomeTopbar } from "../organisms/HomeTopbar";
 import { PerformanceSection } from "../organisms/PerformanceSection";
 import { ExploreMarketsSection } from "../organisms/ExploreMarketsSection";
 import { RightSidebar } from "../organisms/RightSidebar";
+import { ActivitySection } from "../organisms/ActivitySection";
 
 interface HomeTemplateProps {
   performanceData: {
@@ -69,8 +70,15 @@ export function HomeTemplate({
           </div>
         )}
 
-        {/* Explore Markets Section */}
-        <div className="col-span-12">
+        {/* Activity Section and Explore Markets Section - Side by Side */}
+        <div className="col-span-6">
+          {performanceData.rightSidebar?.activityChartData && (
+            <ActivitySection 
+              chartData={performanceData.rightSidebar.activityChartData} 
+            />
+          )}
+        </div>
+        <div className="col-span-6">
           <ExploreMarketsSection markets={marketsData} />
         </div>
       </main>
