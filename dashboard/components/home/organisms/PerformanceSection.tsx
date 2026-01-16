@@ -130,7 +130,7 @@ export function PerformanceSection({ data }: PerformanceSectionProps) {
             className={`px-3 py-1 rounded-md text-xs font-medium transition-all duration-200 ${
               activeTab === "crypto"
                 ? "bg-yellow-400 text-slate-900"
-                : "bg-transparent text-slate-600 hover:bg-slate-100"
+                : "bg-slate-900 text-white hover:bg-slate-800"
             }`}
           >
             Crypto
@@ -140,7 +140,7 @@ export function PerformanceSection({ data }: PerformanceSectionProps) {
             className={`px-3 py-1 rounded-md text-xs font-medium transition-all duration-200 ${
               activeTab === "forex"
                 ? "bg-yellow-400 text-slate-900"
-                : "bg-transparent text-slate-600 hover:bg-slate-100"
+                : "bg-slate-900 text-white hover:bg-slate-800"
             }`}
           >
             Forex
