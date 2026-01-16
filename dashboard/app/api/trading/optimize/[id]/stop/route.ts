@@ -24,9 +24,9 @@ export async function POST(
       stopped_reason: "User requested stop",
       completed_at: new Date().toISOString(),
     };
-    const { data: optimization, error: updateError } = await supabase
-      .from("strategy_optimizations")
-      .update(updateData as any)
+    const query = supabase.from("strategy_optimizations") as any;
+    const { data: optimization, error: updateError } = await query
+      .update(updateData)
       .eq("id", id)
       .select()
       .single();
