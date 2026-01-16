@@ -90,7 +90,7 @@ CONFIG = {
     # TAAPI is optional now (replaced with TA-Lib + Binance)
     "taapi_api_key": _get_env("TAAPI_API_KEY"),  # Optional, kept for backwards compatibility
     # Exchange selection (default: aster)
-    "exchange": _get_env("EXCHANGE", "aster").lower(),  # Options: "aster", "hyperliquid", "pepperstone"
+    "exchange": _get_env("EXCHANGE", "aster").lower(),  # Options: "aster", "binance", "hyperliquid", "pepperstone"
     # Aster DEX API (default exchange)
     "aster_api_base": _get_env("ASTER_API_BASE", "https://fapi.asterdex.com"),
     "aster_user_address": _get_env("ASTER_USER_ADDRESS"),  # Main wallet address
@@ -108,7 +108,7 @@ CONFIG = {
     "pepperstone_client_secret": _get_env("PEPPERSTONE_CLIENT_SECRET"),  # cTrader API Client Secret
     "pepperstone_account_id": _get_env("PEPPERSTONE_ACCOUNT_ID"),  # cTrader Account ID
     "pepperstone_environment": _get_env("PEPPERSTONE_ENVIRONMENT", "demo"),  # "demo" or "live"
-    # Binance Futures API (legacy, not used by default)
+    # Binance Futures API
     "binance_api_key": _get_env("BINANCE_API_KEY"),
     "binance_api_secret": _get_env("BINANCE_API_SECRET"),
     "binance_testnet": _get_bool("BINANCE_TESTNET", False),

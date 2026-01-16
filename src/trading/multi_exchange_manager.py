@@ -40,9 +40,26 @@ class MultiExchangeManager:
             except Exception as e:
                 logging.error(f"❌ Failed to initialize Aster: {e}")
         
+        # Check for Binance (crypto)
+        binance_key = CONFIG.get("binance_api_key")
+        binance_secret = CONFIG.get("binance_api_secret")
+        if binance_key and binance_secret:
+            try:
+                from src.trading.binance_api import BinanceAPI
+                self.exchanges["binance"] = BinanceAPI()
+                testnet = CONFIG.get("binance_testnet", False)
+                self.exchange_configs["binance"] = {
+                    "type": "crypto",
+                    "name": "Binance Futures",
+                    "testnet": testnet
+                }
+                logging.info(f"✅ Initialized Binance Futures ({'testnet' if testnet else 'mainnet'}) for crypto trading")
+            except Exception as e:
+                logging.error(f"❌ Failed to initialize Binance: {e}")
+        
         # Check for Hyperliquid (crypto fallback)
         hyperliquid_key = CONFIG.get("hyperliquid_private_key")
-        if hyperliquid_key and "aster" not in self.exchanges:
+        if hyperliquid_key and "aster" not in self.exchanges and "binance" not in self.exchanges:
             try:
                 from src.trading.hyperliquid_api import HyperliquidAPI
                 self.exchanges["hyperliquid"] = HyperliquidAPI()
@@ -96,6 +113,9 @@ class MultiExchangeManager:
             if "aster" in self.exchanges:
                 self.asset_to_exchange[asset_upper] = "aster"
                 logging.debug(f"📌 Mapped crypto asset {asset_upper} -> Aster")
+            elif "binance" in self.exchanges:
+                self.asset_to_exchange[asset_upper] = "binance"
+                logging.debug(f"📌 Mapped crypto asset {asset_upper} -> Binance")
             elif "hyperliquid" in self.exchanges:
                 self.asset_to_exchange[asset_upper] = "hyperliquid"
                 logging.debug(f"📌 Mapped crypto asset {asset_upper} -> Hyperliquid")
@@ -149,6 +169,9 @@ class MultiExchangeManager:
         if "aster" in self.exchanges:
             logging.debug(f"🔍 Auto-detected {asset_upper} as crypto -> Aster")
             return self.exchanges["aster"]
+        elif "binance" in self.exchanges:
+            logging.debug(f"🔍 Auto-detected {asset_upper} as crypto -> Binance")
+            return self.exchanges["binance"]
         elif "hyperliquid" in self.exchanges:
             logging.debug(f"🔍 Auto-detected {asset_upper} as crypto -> Hyperliquid")
             return self.exchanges["hyperliquid"]
@@ -175,7 +198,13 @@ class MultiExchangeManager:
         if len(asset_upper) >= 6 and any(fx in asset_upper for fx in forex_indicators):
             return "pepperstone" if "pepperstone" in self.exchanges else None
         
-        return "aster" if "aster" in self.exchanges else ("hyperliquid" if "hyperliquid" in self.exchanges else None)
+        if "aster" in self.exchanges:
+            return "aster"
+        elif "binance" in self.exchanges:
+            return "binance"
+        elif "hyperliquid" in self.exchanges:
+            return "hyperliquid"
+        return None
     
     async def get_all_positions(self) -> Dict[str, List[Dict[str, Any]]]:
         """Get positions from all exchanges.
