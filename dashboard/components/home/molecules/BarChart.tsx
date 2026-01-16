@@ -38,19 +38,14 @@ export function BarChart({
       {showProfitLoss && (highValue !== undefined || lowValue !== undefined) && (
         <div className="flex items-center justify-between mb-1 text-[9px]">
           {highValue !== undefined && (
-            <span className="text-green-600 font-medium">High: ${highValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            <span className="text-lime-600 font-medium">High: ${highValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
           )}
           {lowValue !== undefined && (
-            <span className="text-red-600 font-medium">Low: ${lowValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            <span className="text-orange-600 font-medium">Low: ${lowValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
           )}
         </div>
       )}
       <div className={`flex justify-between gap-0.5 h-28 relative ${showProfitLoss ? '' : 'items-end'}`}>
-        {/* Zero line for profit/loss chart - positioned at exact center */}
-        {showProfitLoss && (
-          <div className="absolute left-0 right-0 top-1/2 h-px bg-slate-300 z-10" style={{ transform: 'translateY(-0.5px)' }}></div>
-        )}
-        
         {data.map((value, index) => {
           const isPositive = value >= 0;
           const isHighest = showProfitLoss && index === highestIndex;
@@ -60,36 +55,36 @@ export function BarChart({
             : (value / maxHeight) * 100;
           
           return (
-            <div key={index} className="flex-1 flex flex-col items-center relative" style={{ height: 'calc(100% - 24px)' }}>
+            <div key={index} className="flex-1 flex flex-col items-center relative h-full pb-6">
               {showProfitLoss ? (
-                <div className="w-full h-full relative">
-                  {/* Positive bar (profit) - grows upward from center, bottom edge aligns with zero line */}
+                <div className="w-full h-full relative flex items-center justify-center">
+                  {/* Positive bar (profit) - grows upward from center */}
                   {isPositive && (
                     <div
                       className={`w-full rounded-t transition-all absolute ${
                         isHighest 
-                          ? "bg-green-500 ring-2 ring-green-300" 
-                          : "bg-green-400"
+                          ? "bg-lime-500 ring-2 ring-lime-300" 
+                          : "bg-lime-400"
                       }`}
                       style={{ 
                         height: `${barHeight}%`,
-                        bottom: 'calc(50% - 0.5px)',
+                        bottom: '50%',
                         minHeight: value > 0 ? '2px' : '0'
                       }}
                       title={`$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                     ></div>
                   )}
-                  {/* Negative bar (loss) - grows downward from center, top edge aligns with zero line */}
+                  {/* Negative bar (loss) - grows downward from center */}
                   {!isPositive && (
                     <div
                       className={`w-full rounded-b transition-all absolute ${
                         isLowest 
-                          ? "bg-red-500 ring-2 ring-red-300" 
-                          : "bg-red-400"
+                          ? "bg-orange-500 ring-2 ring-orange-300" 
+                          : "bg-orange-400"
                       }`}
                       style={{ 
                         height: `${barHeight}%`,
-                        top: 'calc(50% - 0.5px)',
+                        top: '50%',
                         minHeight: value < 0 ? '2px' : '0'
                       }}
                       title={`$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
@@ -104,7 +99,7 @@ export function BarChart({
                   style={{ height: `${barHeight}%` }}
                 ></div>
               )}
-              <span className="text-slate-500 text-[8px] text-center leading-tight absolute bottom-0" style={{ bottom: '-20px' }}>{labels[index]}</span>
+              <span className="text-slate-500 text-[8px] text-center leading-tight absolute bottom-0">{labels[index]}</span>
             </div>
           );
         })}
