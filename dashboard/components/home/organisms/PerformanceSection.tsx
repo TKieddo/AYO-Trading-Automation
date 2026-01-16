@@ -38,7 +38,7 @@ interface PerformanceSectionProps {
 
 export function PerformanceSection({ data }: PerformanceSectionProps) {
   return (
-    <div className="relative rounded-2xl bg-white border border-black/10 p-6 overflow-hidden">
+    <div className="relative rounded-2xl bg-white border border-black/10 p-6 overflow-hidden min-h-[600px]">
       {/* Glowing sphere background - only on left side */}
       <div className="absolute -right-32 -top-32 w-96 h-96 bg-gradient-to-br from-yellow-400/20 via-orange-500/30 to-yellow-500/20 rounded-full blur-3xl opacity-60"></div>
       <div className="absolute -right-20 -bottom-20 w-64 h-64 bg-gradient-to-br from-yellow-400/20 via-orange-500/30 to-yellow-500/20 rounded-full blur-2xl opacity-40"></div>

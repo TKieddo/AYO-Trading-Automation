@@ -103,23 +103,59 @@ export function DecisionsFeed() {
     );
   }
 
-  if (decisions.length === 0) {
-    return (
-      <Card className="rounded-[24px]">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Brain className="w-5 h-5" />
-            AI Decisions
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="text-center py-8 text-slate-500 dark:text-slate-400">
-            No decisions yet
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
+  // Demo decisions for when there are no real decisions
+  const demoDecisions: Decision[] = [
+    {
+      id: "demo-1",
+      asset: "ETH/USD",
+      action: "buy",
+      allocationUsd: 5000,
+      tpPrice: 3200,
+      slPrice: 2800,
+      rationale: "Strong bullish momentum detected with RSI indicating oversold recovery. Volume spike suggests institutional interest.",
+      timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+    },
+    {
+      id: "demo-2",
+      asset: "BTC/USD",
+      action: "hold",
+      allocationUsd: 8000,
+      tpPrice: 45000,
+      slPrice: 42000,
+      rationale: "Maintaining position while monitoring key support levels. Market consolidation phase expected.",
+      timestamp: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString()
+    },
+    {
+      id: "demo-3",
+      asset: "SOL/USD",
+      action: "sell",
+      allocationUsd: 3000,
+      tpPrice: 95,
+      slPrice: 110,
+      rationale: "Profit target reached. Taking gains as resistance level approaches. Risk-reward ratio favors exit.",
+      timestamp: new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString()
+    },
+    {
+      id: "demo-4",
+      asset: "WETH/USDC",
+      action: "buy",
+      allocationUsd: 2500,
+      tpPrice: 3100,
+      slPrice: 2900,
+      rationale: "Technical breakout confirmed above key resistance. MACD crossover indicates upward trend continuation.",
+      timestamp: new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString()
+    },
+    {
+      id: "demo-5",
+      asset: "MATIC/USD",
+      action: "hold",
+      allocationUsd: 1500,
+      rationale: "Waiting for clearer market direction. Current volatility suggests patience is prudent.",
+      timestamp: new Date(Date.now() - 18 * 60 * 60 * 1000).toISOString()
+    }
+  ];
+
+  const displayDecisions = decisions.length > 0 ? decisions : demoDecisions;
 
   return (
     <Card className="rounded-[24px]">
@@ -130,11 +166,11 @@ export function DecisionsFeed() {
         </CardTitle>
       </CardHeader>
       <CardContent className="pb-0">
-        <div className="relative max-h-[390px] xl:max-h-[380px] overflow-y-auto pr-2">
+        <div className="relative max-h-[550px] overflow-y-auto pr-2">
           {/* Vertical timeline line */}
           <div className="absolute left-3 inset-y-0 w-[2px] bg-slate-300"></div>
           <div className="space-y-0">
-          {decisions.map((decision, idx) => {
+          {displayDecisions.map((decision, idx) => {
             const isBuy = decision.action === "buy";
             const isSell = decision.action === "sell";
             const isHold = decision.action === "hold";
@@ -192,7 +228,7 @@ export function DecisionsFeed() {
                   </div>
                 </div>
                 {/* Thin separator */}
-                {idx < decisions.length - 1 && (
+                {idx < displayDecisions.length - 1 && (
                   <div className="mt-3 border-b border-slate-200" />
                 )}
               </div>
