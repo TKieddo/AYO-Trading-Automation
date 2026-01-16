@@ -32,7 +32,18 @@ export async function POST(req: NextRequest) {
     }
 
     if (trades.length) {
-      const mappedTrades = trades.map((t: any) => ({
+      type MappedTrade = {
+        symbol: string;
+        side: string;
+        size: number;
+        price: number;
+        fee: number;
+        pnl: number | null;
+        executed_at: string;
+        order_id: string | null;
+      };
+      
+      const mappedTrades: MappedTrade[] = trades.map((t: any) => ({
         symbol: t.symbol,
         side: t.side,
         size: Number(t.size ?? 0),
@@ -45,7 +56,7 @@ export async function POST(req: NextRequest) {
       if (mappedTrades.length) await sb.from("trades").insert(mappedTrades as any);
 
       // Update performance_series incrementally when pnl provided
-      const pnlTrades = mappedTrades.filter((t) => t.pnl != null);
+      const pnlTrades = mappedTrades.filter((t: MappedTrade) => t.pnl != null);
       if (pnlTrades.length) {
         // Get last cumulative value
         const { data: last } = await sb
@@ -56,8 +67,8 @@ export async function POST(req: NextRequest) {
           .maybeSingle();
         let base = last ? Number((last as any).value) : 10000;
         const series = pnlTrades
-          .sort((a, b) => new Date(a.executed_at).getTime() - new Date(b.executed_at).getTime())
-          .map((t) => {
+          .sort((a: MappedTrade, b: MappedTrade) => new Date(a.executed_at).getTime() - new Date(b.executed_at).getTime())
+          .map((t: MappedTrade) => {
             base = base + Number(t.pnl);
             return { date: t.executed_at, value: base, pnl: Number(t.pnl) };
           });
