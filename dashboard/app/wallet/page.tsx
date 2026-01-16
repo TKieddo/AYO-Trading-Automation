@@ -17,7 +17,7 @@ async function fetchBalances() {
       base = process.env.NEXT_PUBLIC_BASE_URL.replace(/\/$/, "");
     } else {
       // Fallback to headers if available
-      const h = headers();
+      const h = await headers();
       // Check if headers() returns a Headers-like object
       if (h && typeof h.get === "function") {
         const host = h.get("host") || "localhost:3001";
