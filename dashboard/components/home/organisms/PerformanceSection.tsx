@@ -2,7 +2,6 @@ import { MetricIcon } from "../atoms/MetricIcon";
 import { CircularProgress } from "../atoms/CircularProgress";
 import { Badge } from "../atoms/Badge";
 import { ActivitySection } from "./ActivitySection";
-import { ActivityNotificationCard } from "../molecules/ActivityNotificationCard";
 
 interface PerformanceData {
   total: string;
@@ -85,7 +84,7 @@ export function PerformanceSection({ data }: PerformanceSectionProps) {
           </div>
 
           {/* Metric List - Vertical Format */}
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-4 mb-6">
             {data.metrics.map((metric, index) => (
               <div key={index} className="flex items-center gap-3">
                 <MetricIcon variant={metric.iconVariant}>
@@ -106,6 +105,13 @@ export function PerformanceSection({ data }: PerformanceSectionProps) {
               </div>
             ))}
           </div>
+
+          {/* Activity Section - Moved to left side */}
+          {data.rightSidebar?.activityChartData && (
+            <ActivitySection 
+              chartData={data.rightSidebar.activityChartData} 
+            />
+          )}
         </div>
 
         {/* Right Sidebar - Cards */}
@@ -147,52 +153,6 @@ export function PerformanceSection({ data }: PerformanceSectionProps) {
               />
             </div>
 
-            {/* Activity Section */}
-            {data.rightSidebar.activityChartData && (
-              <ActivitySection 
-                chartData={data.rightSidebar.activityChartData} 
-                notifications={data.rightSidebar.notifications}
-              />
-            )}
-
-            {/* Activity Notifications */}
-            {data.rightSidebar.notifications && data.rightSidebar.notifications.length > 0 && (
-              <div className="rounded-xl bg-gray-800 p-4 space-y-3">
-                {data.rightSidebar.notifications.map((notification, index) => (
-                  <ActivityNotificationCard
-                    key={index}
-                    icon={notification.icon}
-                    date={notification.date}
-                    avatar={notification.avatar}
-                    title={notification.title}
-                    amount={notification.amount}
-                    variant={notification.variant}
-                  />
-                ))}
-
-                {/* Action Buttons */}
-                <div className="flex gap-2 mt-3">
-                  <button className="flex-1 px-3 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-white text-xs">
-                    Details
-                  </button>
-                  <button className="flex-1 px-3 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-white text-xs">
-                    Docs
-                  </button>
-                  <button className="flex-1 px-3 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-white text-xs">
-                    Notes
-                  </button>
-                </div>
-
-                {/* Arrow Icon */}
-                <div className="flex justify-end mt-2">
-                  <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center">
-                    <svg className="w-4 h-4 text-black" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                    </svg>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         )}
       </div>
