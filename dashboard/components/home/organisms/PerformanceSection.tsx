@@ -51,36 +51,39 @@ export function PerformanceSection({ data }: PerformanceSectionProps) {
       <div className="absolute -right-20 -bottom-20 w-64 h-64 bg-gradient-to-br from-yellow-400/20 via-orange-500/30 to-yellow-500/20 rounded-full blur-2xl opacity-40"></div>
       
       <div className="relative z-10">
-        <div className="flex items-center gap-2 mb-4">
-          <h2 className="text-slate-900 text-lg font-semibold">Performance</h2>
-          <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-        </div>
-        
-        <div className="mb-6">
-          <div className="text-5xl font-bold text-slate-900 mb-2">
-            {(() => {
-              const parts = data.total.split(".");
-              if (parts.length === 2) {
+        {/* Performance Header - Bordered Container */}
+        <div className="rounded-lg border border-slate-200 p-4 mb-4">
+          <div className="flex items-center gap-2 mb-3">
+            <h2 className="text-slate-900 text-base font-semibold">Performance</h2>
+            <svg className="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          
+          <div className="mb-2">
+            <div className="text-4xl font-bold text-slate-900 mb-1.5">
+              {(() => {
+                const parts = data.total.split(".");
+                if (parts.length === 2) {
+                  return (
+                    <>
+                      {parts[0]}<span className="text-xl">.{parts[1]} $</span>
+                    </>
+                  );
+                }
                 return (
                   <>
-                    {parts[0]}<span className="text-2xl">.{parts[1]} $</span>
+                    {data.total}<span className="text-xl">.00 $</span>
                   </>
                 );
-              }
-              return (
-                <>
-                  {data.total}<span className="text-2xl">.00 $</span>
-                </>
-              );
-            })()}
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="px-3 py-1 bg-slate-100 rounded-full text-sm text-slate-700">{data.period}</span>
-            <div className="flex items-center gap-1">
-              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-              <span className="text-green-600 text-sm">{data.change}</span>
+              })()}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 bg-slate-100 rounded-full text-xs text-slate-700">{data.period}</span>
+              <div className="flex items-center gap-1">
+                <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>
+                <span className="text-green-600 text-xs">{data.change}</span>
+              </div>
             </div>
           </div>
         </div>
