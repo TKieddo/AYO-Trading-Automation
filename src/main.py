@@ -136,6 +136,7 @@ def main():
             from src.trading.aster_api import AsterAPI
             try:
                 exchange = AsterAPI()
+                hyperliquid = exchange  # Backward compatibility alias
                 logging.info(f"✅ Using Aster DEX (default)")
             except ValueError as e:
                 logging.error(f"❌ Failed to initialize Aster: {e}")
@@ -314,7 +315,12 @@ def main():
             for pos_wrap in state['positions']:
                 pos = pos_wrap
                 coin = pos.get('coin') or pos.get('symbol')
-                asset_exchange = get_exchange_for_asset(coin) if coin else exchange
+                # Get the appropriate exchange for this asset
+                # In multi-exchange mode, use exchange_manager; otherwise use the single exchange
+                if use_multi_exchange and exchange_manager and coin:
+                    asset_exchange = exchange_manager.get_exchange_for_asset(coin) or exchange
+                else:
+                    asset_exchange = exchange
                 current_px = await asset_exchange.get_current_price(coin) if coin else None
                 positions.append({
                     "symbol": coin,
