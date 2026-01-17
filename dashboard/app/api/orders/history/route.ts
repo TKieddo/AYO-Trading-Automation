@@ -15,9 +15,10 @@ export async function GET(req: NextRequest) {
     const forceSync = searchParams.get("forceSync") === "true";
     const limit = searchParams.get("limit") ? parseInt(searchParams.get("limit")!) : 1000;
 
-    // Step 1: Fetch existing orders from Supabase
+    // Step 1: Always fetch existing orders from Supabase first (contains data from all exchanges)
+    // Supabase is the source of truth - it contains orders from both Aster and Binance
     let supabaseOrders: any[] = [];
-    if (sb && !forceSync) {
+    if (sb) {
       try {
         const query = sb
           .from("orders")
@@ -39,21 +40,25 @@ export async function GET(req: NextRequest) {
             createdAt: o.created_at,
             updatedAt: o.updated_at,
           }));
+          console.log(`Fetched ${supabaseOrders.length} orders from Supabase (includes all exchanges)`);
         }
       } catch (error: any) {
         console.error("Error fetching from Supabase:", error);
       }
     }
 
-    // Step 2: Fetch orders from Exchange APIs (Aster and/or Binance) - fetch from both if configured
+    // Step 2: Optionally sync fresh data from Exchange APIs (if forceSync or no Supabase data)
+    // This updates Supabase with latest data, but Supabase is always the primary source
     const asterEnv = getAsterEnv();
     const hasBinance = !!(process.env.BINANCE_API_KEY && process.env.BINANCE_API_SECRET);
     const apiOrders: any[] = [];
     const ordersToSave: any[] = [];
     const sources: string[] = [];
     
-    // Priority 1: Try Aster API if configured
-    if (asterEnv) {
+    // Sync from APIs only if forceSync is requested or we have no Supabase data
+    if (forceSync || supabaseOrders.length === 0) {
+      // Priority 1: Try Aster API if configured
+      if (asterEnv) {
       try {
         console.log("Fetching orders from Aster API...");
         // Fetch all orders from Aster API (includes open, filled, canceled, etc.)
@@ -147,16 +152,16 @@ export async function GET(req: NextRequest) {
       } catch (error: any) {
         console.error("Error fetching Aster API orders:", error.message || error);
       }
-    }
-    
-    // Priority 2: Binance orders are stored in Supabase by the Python agent
-    // They should already be in Supabase from the Python agent during trading
-    if (hasBinance) {
-      try {
-        console.log("Binance orders are stored in Supabase (populated by Python agent during trading)");
-        sources.push("binance");
-      } catch (error: any) {
-        console.error("Error processing Binance orders:", error.message || error);
+      
+      // Priority 2: Binance orders are stored in Supabase by the Python agent
+      // They should already be in Supabase from the Python agent during trading
+      if (hasBinance) {
+        try {
+          console.log("Binance orders are stored in Supabase (populated by Python agent during trading)");
+          sources.push("binance");
+        } catch (error: any) {
+          console.error("Error processing Binance orders:", error.message || error);
+        }
       }
     }
 

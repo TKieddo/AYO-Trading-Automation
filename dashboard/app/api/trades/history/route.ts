@@ -51,9 +51,10 @@ export async function GET(req: NextRequest) {
     const forceSync = searchParams.get("forceSync") === "true"; // Force sync from API
     const limit = searchParams.get("limit") ? parseInt(searchParams.get("limit")!) : 1000; // API limit
 
-    // Step 1: Fetch existing trades from Supabase
+    // Step 1: Always fetch existing trades from Supabase first (contains data from all exchanges)
+    // Supabase is the source of truth - it contains trades from both Aster and Binance
     let supabaseTrades: any[] = [];
-    if (sb && !forceSync) {
+    if (sb) {
       try {
         const { data, error } = await sb
           .from("trades")
@@ -75,9 +76,10 @@ export async function GET(req: NextRequest) {
             size: Number(t.size),
             price: Number(t.price),
             fee: Number(t.fee || 0),
-            pnl: t.pnl != null ? Number(t.pnl) : 0,
+            pnl: t.pnl != null ? Number(t.pnl) : null, // Keep null for trades without PnL
             timestamp: t.executed_at,
           }));
+          console.log(`Fetched ${supabaseTrades.length} trades from Supabase (includes all exchanges)`);
         }
       } catch (error: any) {
         console.error("Error fetching from Supabase:", error);
@@ -91,7 +93,8 @@ export async function GET(req: NextRequest) {
     const tradesToSave: any[] = [];
     const sources: string[] = [];
     
-    // Fetch from both exchanges if both are configured
+    // Step 2: Optionally sync fresh data from Exchange APIs (if forceSync or no Supabase data)
+    // This updates Supabase with latest data, but Supabase is always the primary source
     if (forceSync || supabaseTrades.length === 0) {
       // Try Aster API if configured
       if (exchanges.aster && asterEnv) {
