@@ -1,13 +1,21 @@
 import { ArrowDownUp, Coins, Wallet } from "lucide-react";
 import { headers } from "next/headers";
 import { getAsterEnv } from "@/lib/aster";
-import { getHyperliquidEnv } from "@/lib/hyperliquid";
+
+function getBinanceEnv() {
+  const apiKey = process.env.BINANCE_API_KEY;
+  const apiSecret = process.env.BINANCE_API_SECRET;
+  if (apiKey && apiSecret) {
+    return { apiKey, apiSecret };
+  }
+  return null;
+}
 
 async function fetchBalances() {
-  // Determine which exchange is configured (Aster takes priority)
+  // Determine which exchange is configured
   const asterEnv = getAsterEnv();
-  const hyperliquidEnv = getHyperliquidEnv();
-  const exchange = asterEnv ? "aster" : (hyperliquidEnv ? "hyperliquid" : null);
+  const binanceEnv = getBinanceEnv();
+  const exchange = asterEnv ? "aster" : (binanceEnv ? "binance" : null);
   
   // Get base URL - prefer environment variable, fallback to headers
   let base: string;
@@ -34,16 +42,17 @@ async function fetchBalances() {
   }
 
   // Call the appropriate API endpoint based on configured exchange
+  // Both Aster and Binance use the Python backend /status endpoint which works for both
   const apiEndpoint = exchange === "aster" 
     ? `${base}/api/aster/balances`
-    : exchange === "hyperliquid"
-    ? `${base}/api/hyperliquid/balances`
+    : exchange === "binance"
+    ? `${base}/api/aster/balances`  // Use same endpoint, Python backend handles exchange detection
     : null;
 
   if (!apiEndpoint) {
     return { 
       balances: [], 
-      error: "No exchange configured. Please set either Aster (ASTER_USER_ADDRESS, ASTER_SIGNER_ADDRESS, ASTER_PRIVATE_KEY) or Hyperliquid (HYPERLIQUID_WALLET_ADDRESS) credentials." 
+      error: "No exchange configured. Please set Aster credentials (ASTER_USER_ADDRESS, ASTER_SIGNER_ADDRESS, ASTER_PRIVATE_KEY) or Binance credentials (BINANCE_API_KEY, BINANCE_API_SECRET)." 
     };
   }
 
@@ -61,26 +70,17 @@ export default async function WalletPage() {
   const { balances, error, accountValue, debug, network, exchange } = await fetchBalances();
   
   // Calculate total based on exchange type
-  // Both Aster and Hyperliquid now return accountValue from their APIs
   let total: number;
   if (accountValue != null && accountValue > 0) {
-    // Use accountValue from API if available (preferred for both exchanges)
+    // Use accountValue from API if available (preferred)
     total = accountValue;
-  } else if (exchange === "aster") {
-    // Fallback for Aster: sum crossWalletBalance from all balances (includes unrealized PnL)
-    total = balances.reduce((acc: number, b: any) => acc + (Number(b.crossWalletBalance || b.walletBalance || 0) || 0), 0);
   } else {
-    // Fallback for Hyperliquid: sum position values
-    total = balances.reduce((acc: number, b: any) => acc + (Number(b.walletBalance || b.positionValue) || 0), 0);
+    // Fallback: sum crossWalletBalance from all balances (includes unrealized PnL)
+    total = balances.reduce((acc: number, b: any) => acc + (Number(b.crossWalletBalance || b.walletBalance || 0) || 0), 0);
   }
   
-  // Get network from API response, fallback to env var if not present (only for Hyperliquid)
-  const networkFromApi = network || process.env.HYPERLIQUID_NETWORK || "mainnet";
-  const networkLabel = networkFromApi === "testnet" ? "Testnet" : "Mainnet";
-  const exchangeName = exchange === "aster" ? "Aster" : "Hyperliquid";
-  const exchangeLabel = exchange === "aster" 
-    ? "Aster" 
-    : `Hyperliquid (${networkLabel})`;
+  const exchangeName = exchange === "aster" ? "Aster" : "Binance";
+  const exchangeLabel = exchangeName;
 
   // Filter balances to only show assets where Balance/Position is greater than 0
   const filteredBalances = balances.filter((b: any) => {

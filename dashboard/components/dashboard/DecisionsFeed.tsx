@@ -48,12 +48,23 @@ function formatRationale(rationale: string | undefined, reasoning: string | unde
 export function DecisionsFeed() {
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [loading, setLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
 
   useEffect(() => {
+    let isMounted = true;
+    
     const fetchDecisions = async () => {
       try {
         // Fetch more decisions to ensure we show all recent activity
-        const response = await fetch("/api/decisions?limit=50");
+        const response = await fetch("/api/decisions?limit=50", {
+          cache: "no-store",
+          headers: {
+            "Cache-Control": "no-cache",
+          },
+        });
+        
+        if (!isMounted) return; // Prevent state updates if component unmounted
+        
         if (response.ok) {
           const data = await response.json();
           // Sort by timestamp descending (most recent first) if not already sorted
@@ -64,32 +75,63 @@ export function DecisionsFeed() {
                 return timeB - timeA; // Descending
               })
             : [];
-          setDecisions(sorted);
-        } else {
-          setDecisions([]);
+          
+          // Always update decisions if we got valid data (even if empty array)
+          // But only clear if we've never successfully loaded before
+          if (isMounted) {
+            if (sorted.length > 0) {
+              // Got new decisions - update
+              setDecisions(sorted);
+              if (!hasLoadedOnce) {
+                setHasLoadedOnce(true);
+              }
+            } else if (!hasLoadedOnce) {
+              // First load and got empty - set empty state
+              setDecisions([]);
+              setHasLoadedOnce(true);
+            }
+            // If we have existing decisions and new fetch returns empty, keep the old ones
+            // This prevents flickering when API temporarily returns empty
+          }
         }
+        // Don't clear decisions on error - keep showing what we have
       } catch (error) {
+        if (!isMounted) return;
         console.error("Failed to fetch decisions:", error);
-        setDecisions([]);
+        // Don't clear decisions on error - keep previous data visible
+        // Only set hasLoadedOnce if this was the first attempt
+        if (!hasLoadedOnce) {
+          setHasLoadedOnce(true);
+        }
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
 
     fetchDecisions();
     // Refresh every 5 seconds to show new decisions
-    const interval = setInterval(fetchDecisions, 5000);
+    const interval = setInterval(() => {
+      if (isMounted) {
+        fetchDecisions();
+      }
+    }, 5000);
 
-    return () => clearInterval(interval);
-  }, []);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [hasLoadedOnce]);
 
-  if (loading) {
+  // Show loading state only on initial load (when we have no decisions yet)
+  if (loading && decisions.length === 0 && !hasLoadedOnce) {
     return (
       <Card className="rounded-[24px] bg-lime-400/20 backdrop-blur-md border-lime-400/30">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-white">
             <Brain className="w-5 h-5" />
-            Agent Decisions
+            AI Decisions
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -103,60 +145,32 @@ export function DecisionsFeed() {
     );
   }
 
-  // Demo decisions for when there are no real decisions
-  const demoDecisions: Decision[] = [
-    {
-      id: "demo-1",
-      asset: "ETH/USD",
-      action: "buy",
-      allocationUsd: 5000,
-      tpPrice: 3200,
-      slPrice: 2800,
-      rationale: "Strong bullish momentum detected with RSI indicating oversold recovery. Volume spike suggests institutional interest.",
-      timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
-    },
-    {
-      id: "demo-2",
-      asset: "BTC/USD",
-      action: "hold",
-      allocationUsd: 8000,
-      tpPrice: 45000,
-      slPrice: 42000,
-      rationale: "Maintaining position while monitoring key support levels. Market consolidation phase expected.",
-      timestamp: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString()
-    },
-    {
-      id: "demo-3",
-      asset: "SOL/USD",
-      action: "sell",
-      allocationUsd: 3000,
-      tpPrice: 95,
-      slPrice: 110,
-      rationale: "Profit target reached. Taking gains as resistance level approaches. Risk-reward ratio favors exit.",
-      timestamp: new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString()
-    },
-    {
-      id: "demo-4",
-      asset: "WETH/USDC",
-      action: "buy",
-      allocationUsd: 2500,
-      tpPrice: 3100,
-      slPrice: 2900,
-      rationale: "Technical breakout confirmed above key resistance. MACD crossover indicates upward trend continuation.",
-      timestamp: new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString()
-    },
-    {
-      id: "demo-5",
-      asset: "MATIC/USD",
-      action: "hold",
-      allocationUsd: 1500,
-      rationale: "Waiting for clearer market direction. Current volatility suggests patience is prudent.",
-      timestamp: new Date(Date.now() - 18 * 60 * 60 * 1000).toISOString()
-    }
-  ];
+  // Show empty state only if we've loaded at least once and have no decisions
+  // This prevents flickering when API temporarily fails
+  if (decisions.length === 0 && !loading && hasLoadedOnce) {
+    return (
+      <Card className="rounded-[24px] bg-lime-400/20 backdrop-blur-md border-lime-400/30">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-white">
+            <Brain className="w-5 h-5" />
+            AI Decisions
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <Brain className="w-12 h-12 text-lime-400/50 mb-4" />
+            <p className="text-lime-200/80 text-sm mb-2">No trading decisions yet</p>
+            <p className="text-lime-300/60 text-xs">
+              Decisions will appear here once the trading agent starts making trades
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
-  const displayDecisions = decisions.length > 0 ? decisions : demoDecisions;
-
+  // Always show decisions if we have them, even if we're refreshing in background
+  // This prevents flickering during updates
   return (
     <Card className="rounded-[24px] bg-lime-400/20 backdrop-blur-md border-lime-400/30">
       <CardHeader>
@@ -170,7 +184,7 @@ export function DecisionsFeed() {
           {/* Vertical timeline line */}
           <div className="absolute left-3 inset-y-0 w-[2px] bg-lime-400/40"></div>
           <div className="space-y-0">
-          {displayDecisions.map((decision, idx) => {
+          {decisions.map((decision, idx) => {
             const isBuy = decision.action === "buy";
             const isSell = decision.action === "sell";
             const isHold = decision.action === "hold";
@@ -228,7 +242,7 @@ export function DecisionsFeed() {
                   </div>
                 </div>
                 {/* Thin separator */}
-                {idx < displayDecisions.length - 1 && (
+                {idx < decisions.length - 1 && (
                   <div className="mt-3 border-b border-lime-400/20" />
                 )}
               </div>

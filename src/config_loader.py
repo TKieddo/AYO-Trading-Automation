@@ -90,24 +90,12 @@ CONFIG = {
     # TAAPI is optional now (replaced with TA-Lib + Binance)
     "taapi_api_key": _get_env("TAAPI_API_KEY"),  # Optional, kept for backwards compatibility
     # Exchange selection (default: aster)
-    "exchange": _get_env("EXCHANGE", "aster").lower(),  # Options: "aster", "binance", "hyperliquid", "pepperstone"
+    "exchange": _get_env("EXCHANGE", "aster").lower(),  # Options: "aster", "binance"
     # Aster DEX API (default exchange)
     "aster_api_base": _get_env("ASTER_API_BASE", "https://fapi.asterdex.com"),
     "aster_user_address": _get_env("ASTER_USER_ADDRESS"),  # Main wallet address
     "aster_signer_address": _get_env("ASTER_SIGNER_ADDRESS"),  # API wallet address
     "aster_private_key": _get_env("ASTER_PRIVATE_KEY"),  # API wallet private key
-    # Hyperliquid (alternative exchange)
-    "hyperliquid_private_key": _get_env("HYPERLIQUID_PRIVATE_KEY") or _get_env("LIGHTER_PRIVATE_KEY"),
-    "hyperliquid_wallet_address": _get_env("HYPERLIQUID_WALLET_ADDRESS"),  # Main wallet address (for querying balances)
-    "mnemonic": _get_env("MNEMONIC"),
-    # Hyperliquid network/base URL overrides
-    "hyperliquid_base_url": _get_env("HYPERLIQUID_BASE_URL"),
-    "hyperliquid_network": _get_env("HYPERLIQUID_NETWORK", "mainnet"),
-    # Pepperstone cTrader API (forex trading)
-    "pepperstone_client_id": _get_env("PEPPERSTONE_CLIENT_ID"),  # cTrader API Client ID
-    "pepperstone_client_secret": _get_env("PEPPERSTONE_CLIENT_SECRET"),  # cTrader API Client Secret
-    "pepperstone_account_id": _get_env("PEPPERSTONE_ACCOUNT_ID"),  # cTrader Account ID
-    "pepperstone_environment": _get_env("PEPPERSTONE_ENVIRONMENT", "demo"),  # "demo" or "live"
     # Binance Futures API
     "binance_api_key": _get_env("BINANCE_API_KEY"),
     "binance_api_secret": _get_env("BINANCE_API_SECRET"),
@@ -124,7 +112,7 @@ CONFIG = {
     "max_positions": _get_int("MAX_POSITIONS", 6),  # Maximum concurrent positions
     "position_sizing_mode": _get_env("POSITION_SIZING_MODE", "auto"),  # "auto", "fixed", "target_profit", or "margin"
     # LLM via DeepSeek API (replaces OpenRouter)
-    "deepseek_api_key": _get_env("DEEPSEEK_API_KEY"),  # Optional - only needed for LLM trading decisions
+    "deepseek_api_key": _get_env("DEEPSEEK_API_KEY", required=True),
     "deepseek_base_url": _get_env("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
     "llm_model": _get_env("LLM_MODEL", "deepseek-chat"),  # Options: deepseek-chat, deepseek-reasoner
     # DeepSeek-specific settings
@@ -173,25 +161,14 @@ def _parse_assets(assets_str: str | None) -> list[str]:
     else:
         return [a.strip().upper() for a in assets_str.split(" ") if a.strip()]
 
-# Combine CRYPTO_ASSETS and FOREX_ASSETS into a single assets list
-_crypto_assets_list = _parse_assets(CONFIG.get("crypto_assets"))
-_forex_assets_list = _parse_assets(CONFIG.get("forex_assets"))
-_legacy_assets_list = _parse_assets(CONFIG.get("assets"))
-
-# Build combined assets list: prefer CRYPTO_ASSETS + FOREX_ASSETS, fallback to legacy ASSETS
-if _crypto_assets_list or _forex_assets_list:
-    CONFIG["assets"] = " ".join(_crypto_assets_list + _forex_assets_list)
-    CONFIG["crypto_assets_list"] = _crypto_assets_list
-    CONFIG["forex_assets_list"] = _forex_assets_list
-elif _legacy_assets_list:
-    # Fallback to legacy ASSETS if CRYPTO_ASSETS/FOREX_ASSETS not set
-    CONFIG["assets"] = " ".join(_legacy_assets_list)
-    CONFIG["crypto_assets_list"] = _legacy_assets_list  # Assume all are crypto for backward compatibility
-    CONFIG["forex_assets_list"] = []
+# Parse assets list
+_assets_list = _parse_assets(CONFIG.get("assets"))
+if _assets_list:
+    CONFIG["assets"] = " ".join(_assets_list)
+    CONFIG["assets_list"] = _assets_list
 else:
     CONFIG["assets"] = None
-    CONFIG["crypto_assets_list"] = []
-    CONFIG["forex_assets_list"] = []
+    CONFIG["assets_list"] = []
 
 # Load per-asset leverage settings (e.g., ZEC_LEVERAGE=5, BTC_LEVERAGE=10)
 # This scans all environment variables matching {ASSET}_LEVERAGE pattern

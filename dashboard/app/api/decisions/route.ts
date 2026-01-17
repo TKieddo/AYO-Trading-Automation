@@ -2,16 +2,44 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase/client";
 import { fetchJsonWithRetry, cacheGet, cacheSet } from "@/lib/http";
 import { persistDecisions } from "@/lib/supabase/persist";
-const BASE = (process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3001").replace(/\/$/, "");
+import crypto from "crypto";
+
+const PYTHON_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+
+/**
+ * Generate a stable, unique ID for a decision based on its content
+ * This ensures the same decision always gets the same ID for proper upserts
+ */
+function generateDecisionId(entry: any): string {
+  // If entry already has an ID, use it
+  if (entry.id) {
+    return String(entry.id);
+  }
+  
+  // Generate stable ID from: asset + action + timestamp (rounded to second for stability)
+  const asset = (entry.asset || "UNKNOWN").toUpperCase();
+  const action = (entry.action || "hold").toLowerCase();
+  const timestamp = entry.timestamp || new Date().toISOString();
+  
+  // Round timestamp to nearest second for stability (same decision in same second = same ID)
+  const timestampDate = new Date(timestamp);
+  const roundedTimestamp = new Date(Math.floor(timestampDate.getTime() / 1000) * 1000).toISOString();
+  
+  // Create hash from key fields
+  const hashInput = `${asset}_${action}_${roundedTimestamp}`;
+  const hash = crypto.createHash("sha256").update(hashInput).digest("hex").substring(0, 16);
+  
+  return `decision_${asset}_${action}_${hash}`;
+}
 
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const limit = parseInt(searchParams.get("limit") || "20");
 
-    // Fetch from Python agent's /diary endpoint
+    // Fetch from Python agent's /diary endpoint (runs on port 3000)
     const data = await fetchJsonWithRetry<any>(
-      `${BASE}/agent/diary?limit=${limit}`,
+      `${PYTHON_API_URL}/diary?limit=${limit}`,
       { timeoutMs: 5000, cache: "no-store" },
       1,
       100
@@ -27,8 +55,8 @@ export async function GET(request: NextRequest) {
       return timeB - timeA; // Descending order
     });
     
-    const decisions = sortedEntries.map((entry: any, index: number) => ({
-      id: entry.id || `decision-${index}-${entry.timestamp || Date.now()}`,
+    const decisions = sortedEntries.map((entry: any) => ({
+      id: generateDecisionId(entry), // Generate stable, unique ID
       asset: entry.asset || "UNKNOWN",
       action: (entry.action?.toLowerCase() || "hold") as "buy" | "sell" | "hold",
       allocationUsd: entry.allocation_usd != null ? entry.allocation_usd : (entry.allocationUsd != null ? entry.allocationUsd : 0),
@@ -39,7 +67,13 @@ export async function GET(request: NextRequest) {
       timestamp: entry.timestamp || new Date().toISOString(),
     }));
 
-    persistDecisions(decisions).catch(() => {});
+    // Persist decisions to database
+    // This automatically saves decisions and periodically cleans up old ones (older than 10 days)
+    // Cleanup runs ~5% of the time when decisions are persisted to avoid overhead
+    // For more frequent cleanup, call /api/cleanup/decisions or set up a cron job
+    persistDecisions(decisions).catch((err) => {
+      console.error("Error persisting decisions:", err);
+    });
     cacheSet("decisions", decisions, 5000);
     return NextResponse.json(decisions);
   } catch (error: any) {

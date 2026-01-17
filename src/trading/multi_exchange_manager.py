@@ -1,6 +1,6 @@
 """Multi-exchange manager for trading on multiple exchanges simultaneously.
 
-This module allows trading crypto (Aster/Hyperliquid) and forex (Pepperstone) at the same time.
+This module allows trading crypto on Aster and Binance exchanges.
 """
 
 import logging
@@ -57,38 +57,6 @@ class MultiExchangeManager:
             except Exception as e:
                 logging.error(f"❌ Failed to initialize Binance: {e}")
         
-        # Check for Hyperliquid (crypto fallback)
-        hyperliquid_key = CONFIG.get("hyperliquid_private_key")
-        if hyperliquid_key and "aster" not in self.exchanges and "binance" not in self.exchanges:
-            try:
-                from src.trading.hyperliquid_api import HyperliquidAPI
-                self.exchanges["hyperliquid"] = HyperliquidAPI()
-                self.exchange_configs["hyperliquid"] = {
-                    "type": "crypto",
-                    "name": "Hyperliquid"
-                }
-                logging.info("✅ Initialized Hyperliquid for crypto trading")
-            except Exception as e:
-                logging.error(f"❌ Failed to initialize Hyperliquid: {e}")
-        
-        # Check for Pepperstone (forex)
-        pepperstone_client_id = CONFIG.get("pepperstone_client_id")
-        pepperstone_client_secret = CONFIG.get("pepperstone_client_secret")
-        
-        if pepperstone_client_id and pepperstone_client_secret:
-            try:
-                from src.trading.pepperstone_api import PepperstoneAPI
-                self.exchanges["pepperstone"] = PepperstoneAPI()
-                environment = CONFIG.get("pepperstone_environment", "demo")
-                self.exchange_configs["pepperstone"] = {
-                    "type": "forex",
-                    "name": "Pepperstone cTrader",
-                    "environment": environment
-                }
-                logging.info(f"✅ Initialized Pepperstone cTrader ({environment}) for forex trading")
-            except Exception as e:
-                logging.error(f"❌ Failed to initialize Pepperstone: {e}")
-        
         if not self.exchanges:
             raise ValueError("No exchanges configured! Please set up at least one exchange.")
         
@@ -99,43 +67,28 @@ class MultiExchangeManager:
     def _map_assets_to_exchanges(self):
         """Map assets to their appropriate exchanges.
         
-        Uses CRYPTO_ASSETS and FOREX_ASSETS from config to explicitly map:
-        - Crypto assets -> Aster/Hyperliquid
-        - Forex pairs -> Pepperstone
+        Maps crypto assets to available exchanges (Aster or Binance).
         """
-        # Get explicit asset lists from config
-        crypto_assets_list = CONFIG.get("crypto_assets_list", [])
-        forex_assets_list = CONFIG.get("forex_assets_list", [])
+        # Get asset list from config
+        assets_list = CONFIG.get("assets_list", [])
         
-        # Map crypto assets to crypto exchange
-        for asset in crypto_assets_list:
+        # Map assets to crypto exchange
+        for asset in assets_list:
             asset_upper = asset.upper()
             if "aster" in self.exchanges:
                 self.asset_to_exchange[asset_upper] = "aster"
-                logging.debug(f"📌 Mapped crypto asset {asset_upper} -> Aster")
+                logging.debug(f"📌 Mapped asset {asset_upper} -> Aster")
             elif "binance" in self.exchanges:
                 self.asset_to_exchange[asset_upper] = "binance"
-                logging.debug(f"📌 Mapped crypto asset {asset_upper} -> Binance")
-            elif "hyperliquid" in self.exchanges:
-                self.asset_to_exchange[asset_upper] = "hyperliquid"
-                logging.debug(f"📌 Mapped crypto asset {asset_upper} -> Hyperliquid")
+                logging.debug(f"📌 Mapped asset {asset_upper} -> Binance")
             else:
-                logging.warning(f"⚠️  No crypto exchange available for {asset_upper}")
-        
-        # Map forex assets to forex exchange
-        for asset in forex_assets_list:
-            asset_upper = asset.upper()
-            if "pepperstone" in self.exchanges:
-                self.asset_to_exchange[asset_upper] = "pepperstone"
-                logging.debug(f"📌 Mapped forex asset {asset_upper} -> Pepperstone")
-            else:
-                logging.warning(f"⚠️  No forex exchange available for {asset_upper}")
+                logging.warning(f"⚠️  No exchange available for {asset_upper}")
         
         # Log mapping summary
-        if crypto_assets_list or forex_assets_list:
-            logging.info(f"✅ Asset mapping complete: {len(crypto_assets_list)} crypto, {len(forex_assets_list)} forex")
+        if assets_list:
+            logging.info(f"✅ Asset mapping complete: {len(assets_list)} assets")
         else:
-            logging.warning("⚠️  No assets configured in CRYPTO_ASSETS or FOREX_ASSETS")
+            logging.warning("⚠️  No assets configured in ASSETS")
     
     def get_exchange_for_asset(self, asset: str) -> Optional[Any]:
         """Get the appropriate exchange for an asset.
@@ -148,7 +101,7 @@ class MultiExchangeManager:
         """
         asset_upper = asset.upper()
         
-        # Check explicit mapping first (from CRYPTO_ASSETS/FOREX_ASSETS)
+        # Check explicit mapping first
         if asset_upper in self.asset_to_exchange:
             exchange_name = self.asset_to_exchange[asset_upper]
             exchange = self.exchanges.get(exchange_name)
@@ -157,24 +110,13 @@ class MultiExchangeManager:
             else:
                 logging.warning(f"⚠️  Exchange '{exchange_name}' not found for asset {asset_upper}")
         
-        # Fallback: Auto-detect based on asset format (for backward compatibility)
-        # Forex pairs typically have 6+ characters and contain currency codes
-        forex_indicators = ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"]
-        if len(asset_upper) >= 6 and any(fx in asset_upper for fx in forex_indicators):
-            if "pepperstone" in self.exchanges:
-                logging.debug(f"🔍 Auto-detected {asset_upper} as forex -> Pepperstone")
-                return self.exchanges["pepperstone"]
-        
-        # Default to crypto exchange
+        # Default to available crypto exchange
         if "aster" in self.exchanges:
-            logging.debug(f"🔍 Auto-detected {asset_upper} as crypto -> Aster")
+            logging.debug(f"🔍 Auto-detected {asset_upper} -> Aster")
             return self.exchanges["aster"]
         elif "binance" in self.exchanges:
-            logging.debug(f"🔍 Auto-detected {asset_upper} as crypto -> Binance")
+            logging.debug(f"🔍 Auto-detected {asset_upper} -> Binance")
             return self.exchanges["binance"]
-        elif "hyperliquid" in self.exchanges:
-            logging.debug(f"🔍 Auto-detected {asset_upper} as crypto -> Hyperliquid")
-            return self.exchanges["hyperliquid"]
         
         logging.error(f"❌ No exchange found for asset {asset_upper}")
         return None
@@ -261,7 +203,7 @@ class MultiExchangeManager:
         """Get all exchanges of a specific type.
         
         Args:
-            exchange_type: "crypto" or "forex"
+            exchange_type: "crypto" (only crypto exchanges are supported)
             
         Returns:
             Dictionary of exchange name -> exchange instance

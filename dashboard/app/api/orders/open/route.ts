@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getHyperliquidEnv, getHyperliquidOpenOrders } from "@/lib/hyperliquid";
+import { getAsterEnv, getAsterOpenOrders } from "@/lib/aster";
 import { getServerSupabase } from "@/lib/supabase/server";
 
 /**
- * Fetch all open orders from Hyperliquid and sync to Supabase.
- * Uses Hyperliquid Info API frontendOpenOrders endpoint.
+ * Fetch all open orders from Aster and sync to Supabase.
+ * Uses Aster API openOrders endpoint.
  */
 export async function GET(req: NextRequest) {
   try {
@@ -49,57 +49,34 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Step 2: Fetch open orders from Hyperliquid API
-    const networkFromEnv = process.env.HYPERLIQUID_NETWORK?.toLowerCase().trim() || "mainnet";
-    let env = getHyperliquidEnv();
-    const hyperliquidOrders: any[] = [];
+    // Step 2: Fetch open orders from Aster API
+    let env = getAsterEnv();
+    const asterOrders: any[] = [];
     const ordersToSave: any[] = [];
     
     if (env) {
-      // Ensure baseUrl matches the env var
-      const expectedBaseUrl = networkFromEnv === "testnet" 
-        ? "https://api.hyperliquid-testnet.xyz" 
-        : "https://api.hyperliquid.xyz";
-      
-      if (env.baseUrl !== expectedBaseUrl) {
-        env = { ...env, baseUrl: expectedBaseUrl };
-      }
-
       try {
-        const orders = await getHyperliquidOpenOrders(env);
+        const orders = await getAsterOpenOrders(env, symbol ? { symbol } : {});
         
         if (!Array.isArray(orders)) {
-          throw new Error("Invalid response from Hyperliquid API");
+          throw new Error("Invalid response from Aster API");
         }
 
-        // Map Hyperliquid order format to our HistoryOrder format
+        // Map Aster order format to our HistoryOrder format
         for (const o of orders) {
-          const coin = o.coin || o.asset || "UNKNOWN";
+          const coin = o.symbol || o.asset || "UNKNOWN";
           
           // Filter by symbol if specified
           if (symbol && coin !== symbol) continue;
           
-          const isBuy = o.isBuy === true || o.side === "B" || o.side === "Buy";
-          const side = isBuy ? "buy" : "sell";
+          const side = o.side?.toLowerCase() === "buy" ? "buy" : "sell";
+          const orderType: "market" | "limit" = o.type?.toLowerCase() === "limit" ? "limit" : "market";
           
-          // Determine order type from Hyperliquid format
-          let orderType: "market" | "limit" = "market";
-          const orderTypeRaw = o.orderType;
-          if (typeof orderTypeRaw === "string") {
-            if (orderTypeRaw.toLowerCase().includes("limit")) {
-              orderType = "limit";
-            }
-          } else if (typeof orderTypeRaw === "object" && orderTypeRaw) {
-            if ("limit" in orderTypeRaw || "limitPx" in orderTypeRaw) {
-              orderType = "limit";
-            }
-          }
+          const orderId = String(o.orderId || o.id || "");
+          const price = o.price != null ? Number(o.price) : undefined;
+          const size = Number(o.origQty || o.size || 0);
           
-          const orderId = String(o.oid || o.id || "");
-          const price = o.px != null ? Number(o.px) : (orderType === "limit" && o.limitPx ? Number(o.limitPx) : undefined);
-          const size = Number(o.sz || o.size || 0);
-          
-          // Get timestamp (use current time for open orders, or time if available)
+          // Get timestamp
           let createdAt: string;
           if (o.time) {
             const timeMs = Number(o.time);
@@ -121,7 +98,7 @@ export async function GET(req: NextRequest) {
             updatedAt: createdAt,
           };
           
-          hyperliquidOrders.push(mappedOrder);
+          asterOrders.push(mappedOrder);
           
           // Prepare for Supabase save
           ordersToSave.push({
@@ -132,14 +109,14 @@ export async function GET(req: NextRequest) {
             size: mappedOrder.size,
             price: mappedOrder.price,
             status: "open",
-            filled_size: 0, // Open orders haven't been filled yet
+            filled_size: 0,
             created_at: createdAt,
             updated_at: createdAt,
           });
         }
       } catch (error: any) {
-        console.error("Error fetching open orders from Hyperliquid:", error);
-        // If Hyperliquid fails, return Supabase data if available
+        console.error("Error fetching open orders from Aster:", error);
+        // If Aster fails, return Supabase data if available
         if (supabaseOrders.length > 0) {
           return NextResponse.json({
             orders: supabaseOrders,
@@ -154,7 +131,6 @@ export async function GET(req: NextRequest) {
       // Step 3: Save/Update orders to Supabase
       if (sb && ordersToSave.length > 0) {
         try {
-          // Upsert orders by order_id (update if exists, insert if new)
           await sb.from("orders").upsert(ordersToSave as any, {
             onConflict: "order_id",
           });
@@ -166,16 +142,14 @@ export async function GET(req: NextRequest) {
     }
 
     // Step 4: Mark closed orders as canceled/filled in Supabase
-    // If an order was in Supabase but not in Hyperliquid response, it might have been filled/canceled
-    if (sb && hyperliquidOrders.length > 0 && supabaseOrders.length > 0) {
+    if (sb && asterOrders.length > 0 && supabaseOrders.length > 0) {
       try {
-        const hyperliquidOrderIds = new Set(hyperliquidOrders.map(o => o.id));
+        const asterOrderIds = new Set(asterOrders.map(o => o.id));
         const closedOrders = supabaseOrders
-          .filter(o => !hyperliquidOrderIds.has(o.id))
+          .filter(o => !asterOrderIds.has(o.id))
           .map(o => o.id);
         
         if (closedOrders.length > 0) {
-          // Update status to filled (assume filled if not in open orders)
           const updateData: any = { 
             status: "filled",
             updated_at: new Date().toISOString(),
@@ -189,8 +163,8 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Step 5: Combine and return results (prioritize Hyperliquid if available)
-    const allOrders = hyperliquidOrders.length > 0 ? hyperliquidOrders : supabaseOrders;
+    // Step 5: Combine and return results (prioritize Aster if available)
+    const allOrders = asterOrders.length > 0 ? asterOrders : supabaseOrders;
     
     // Remove duplicates and sort by created_at (newest first)
     const uniqueOrders = Array.from(
@@ -205,8 +179,8 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       orders: uniqueOrders,
-      source: hyperliquidOrders.length > 0 ? "hyperliquid" : "supabase",
-      synced: hyperliquidOrders.length > 0,
+      source: asterOrders.length > 0 ? "aster" : "supabase",
+      synced: asterOrders.length > 0,
     });
   } catch (error: any) {
     console.error("Error fetching open orders:", error);

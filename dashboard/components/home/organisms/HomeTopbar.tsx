@@ -19,19 +19,19 @@ export function HomeTopbar() {
         <div className="hidden md:flex items-center gap-2 md:gap-4">
           <Link href="/dashboard" className="px-3 md:px-4 py-1.5 border border-lime-400/30 rounded-full text-lime-300 text-xs md:text-sm flex items-center gap-1.5 md:gap-2 hover:bg-lime-400/10 transition-colors whitespace-nowrap">
             <svg className="w-3.5 h-3.5 md:w-4 md:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-            </svg>
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+          </svg>
             <span className="hidden lg:inline">Dashboard</span>
-          </Link>
+        </Link>
           <Link href="/portfolio" className="px-3 md:px-4 py-1.5 border border-lime-400/30 rounded-full text-lime-300 text-xs md:text-sm flex items-center gap-1.5 md:gap-2 hover:bg-lime-400/10 transition-colors whitespace-nowrap">
             <svg className="w-3.5 h-3.5 md:w-4 md:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-            </svg>
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+          </svg>
             <span className="hidden lg:inline">Portfolio</span>
-          </Link>
+        </Link>
           <Link href="/charts" className="px-3 md:px-4 py-1.5 border border-lime-400/30 rounded-full text-lime-300 text-xs md:text-sm flex items-center gap-1.5 md:gap-2 hover:bg-lime-400/10 transition-colors whitespace-nowrap">
             <svg className="w-3.5 h-3.5 md:w-4 md:h-4 text-lime-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
             </svg>
             <span className="hidden lg:inline">Trade</span>
           </Link>

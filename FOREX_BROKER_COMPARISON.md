@@ -167,7 +167,7 @@ if exchange_name == "oanda":
 
 3. **Update Config:**
 ```env
-EXCHANGE=oanda  # or "aster", "hyperliquid", "oanda"
+EXCHANGE=aster  # or "binance"
 OANDA_API_TOKEN=your_token
 OANDA_ACCOUNT_ID=your_account_id
 OANDA_ENVIRONMENT=practice  # or "live"

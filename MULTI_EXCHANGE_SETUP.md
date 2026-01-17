@@ -2,19 +2,18 @@
 
 ## Overview
 
-Your trading system now supports **simultaneous trading on multiple exchanges**! You can trade crypto (Aster/Hyperliquid) and forex (Pepperstone) at the same time.
+Your trading system now supports **simultaneous trading on multiple exchanges**! You can trade crypto on Aster and Binance at the same time.
 
 ## How It Works
 
 ### Single Exchange Mode (Default)
 - Trade on ONE exchange at a time
-- Set `EXCHANGE=aster` or `EXCHANGE=pepperstone` in `.env`
+- Set `EXCHANGE=aster` or `EXCHANGE=binance` in `.env`
 - All assets trade on that single exchange
 
 ### Multi-Exchange Mode (NEW!)
 - Trade on MULTIPLE exchanges simultaneously
-- Crypto assets (BTC, ETH, SOL) → Aster/Hyperliquid
-- Forex pairs (EURUSD, GBPUSD) → Pepperstone
+- Crypto assets (BTC, ETH, SOL) → Aster or Binance
 - System automatically routes each asset to the correct exchange
 
 ## Setup Instructions
@@ -33,14 +32,13 @@ ASTER_USER_ADDRESS=0x...
 ASTER_SIGNER_ADDRESS=0x...
 ASTER_PRIVATE_KEY=0x...
 
-# Pepperstone (forex)
-PEPPERSTONE_CLIENT_ID=your_client_id
-PEPPERSTONE_CLIENT_SECRET=your_client_secret
-PEPPERSTONE_ACCOUNT_ID=your_account_id
-PEPPERSTONE_ENVIRONMENT=demo  # or "live"
+# Binance (crypto)
+BINANCE_API_KEY=your_api_key
+BINANCE_API_SECRET=your_api_secret
+BINANCE_TESTNET=false  # Set to true for testnet
 
-# Trading assets (mix of crypto and forex)
-ASSETS=BTC ETH SOL EURUSD GBPUSD USDJPY
+# Trading assets
+ASSETS=BTC ETH SOL BNB AVAX
 INTERVAL=5m
 ```
 

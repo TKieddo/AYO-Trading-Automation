@@ -1,6 +1,6 @@
-# Nocturne: AI Trading Agent on Hyperliquid
+# Nocturne: AI Trading Agent
 
-This project implements an AI-powered trading agent that leverages LLM models to analyze real-time market data from TAAPI, make informed trading decisions, and execute trades on the Hyperliquid decentralized exchange. The agent runs in a continuous loop, monitoring specified cryptocurrency assets at configurable intervals, using technical indicators to decide on buy/sell/hold actions, and manages positions with take-profit and stop-loss orders.
+This project implements an AI-powered trading agent that leverages LLM models to analyze real-time market data, make informed trading decisions, and execute trades on Aster DEX or Binance Futures. The agent runs in a continuous loop, monitoring specified cryptocurrency assets at configurable intervals, using technical indicators to decide on buy/sell/hold actions, and manages positions with take-profit and stop-loss orders.
 
 ## Table of Contents
 
@@ -39,17 +39,17 @@ See the full [Architecture Documentation](docs/ARCHITECTURE.md) for subsystems, 
 ## Env Configuration
 Populate `.env` (use `.env.example` as reference):
 - TAAPI_API_KEY
-- HYPERLIQUID_PRIVATE_KEY (or LIGHTER_PRIVATE_KEY)
-- OPENROUTER_API_KEY
-- LLM_MODEL 
-- Optional: OPENROUTER_BASE_URL (`https://openrouter.ai/api/v1`), OPENROUTER_REFERER, OPENROUTER_APP_TITLE
+- DEEPSEEK_API_KEY (required)
+- ASTER_USER_ADDRESS, ASTER_SIGNER_ADDRESS, ASTER_PRIVATE_KEY (for Aster DEX)
+- BINANCE_API_KEY, BINANCE_API_SECRET (for Binance Futures)
+- EXCHANGE (set to "aster" or "binance")
+- ASSETS (e.g., "BTC ETH SOL")
+- INTERVAL (e.g., "5m", "1h")
 
 ### Obtaining API Keys
-- **TAAPI_API_KEY**: Sign up at [TAAPI.io](https://taapi.io/) and generate an API key from your dashboard.
-- **HYPERLIQUID_PRIVATE_KEY**: Generate an Ethereum-compatible private key for Hyperliquid. Use tools like MetaMask or `eth_account` library. For security, never share this key.
-- **OPENROUTER_API_KEY**: Create an account at [OpenRouter.ai](https://openrouter.ai/), then generate an API key in your account settings.
-- **LLM_MODEL**: No key needed; specify a model name like "x-ai/grok-4" (see OpenRouter models list).
-
+- **DEEPSEEK_API_KEY**: Sign up at [DeepSeek](https://www.deepseek.com/) and generate an API key.
+- **ASTER credentials**: Set up a wallet and API key on [Aster DEX](https://www.asterdex.com/).
+- **BINANCE credentials**: Create API keys in your Binance account settings (enable Futures trading).
 ## Usage
 Run: `poetry run python src/main.py --assets BTC ETH --interval 1h`
 

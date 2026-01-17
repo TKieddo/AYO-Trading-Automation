@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase/client";
 import { getServerSupabase } from "@/lib/supabase/server";
-import { fetchJsonWithRetry, cacheGet, cacheSet } from "@/lib/http";
+import { fetchJsonWithRetry } from "@/lib/http";
 import { persistMetrics } from "@/lib/supabase/persist";
 
 const BASE = (process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3001").replace(/\/$/, "");
@@ -144,26 +144,15 @@ export async function GET() {
       leverage: leverage,
     };
 
-    // Persist and cache the metrics
+    // Persist the metrics
     persistMetrics(metrics).catch(() => {});
-    cacheSet("metrics", metrics, 5000);
     
-    return NextResponse.json(metrics);
+    return NextResponse.json(metrics, {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+      },
+    });
   } catch (error: any) {
-    // Try to return cached metrics if available
-    const cached = cacheGet<any>("metrics");
-    if (cached) {
-      return NextResponse.json({
-        totalValue: cached.totalValue || cached.total_value || 0,
-        balance: cached.balance || 0,
-        openPositions: cached.openPositions || cached.open_positions || 0,
-        totalPnL: cached.totalPnL || cached.total_pnl || 0,
-        dailyPnL: cached.dailyPnL || cached.daily_pnl || 0,
-        winRate: cached.winRate || cached.win_rate || 0,
-        totalTrades: cached.totalTrades || cached.total_trades || 0,
-        leverage: cached.leverage || 1.0,
-      });
-    }
 
     // Silently handle connection errors - Python agent may not be running
     if (error.code !== 'ECONNREFUSED' && !error.message?.includes('fetch failed')) {

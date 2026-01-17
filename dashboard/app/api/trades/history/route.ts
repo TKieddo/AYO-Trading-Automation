@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getHyperliquidEnv, getHyperliquidUserFills } from "@/lib/hyperliquid";
 import { getAsterEnv, getAsterUserTrades } from "@/lib/aster";
 import { getServerSupabase } from "@/lib/supabase/server";
 import crypto from "crypto";
-
-// Removed Binance-specific helper functions
 
 /**
  * Create a unique hash for a trade to use for deduplication
@@ -16,19 +13,42 @@ function createTradeHash(trade: {
   price: number;
   timestamp: string;
   tradeId?: string | number;
+  exchange?: string;
 }): string {
   // Use trade ID if available, otherwise hash the trade data
+  const exchangePrefix = trade.exchange || "aster";
   if (trade.tradeId) {
-    return `hyperliquid_${trade.tradeId}`;
+    return `${exchangePrefix}_${trade.tradeId}`;
   }
-  const hashInput = `${trade.symbol}_${trade.side}_${trade.size}_${trade.price}_${trade.timestamp}`;
+  const hashInput = `${exchangePrefix}_${trade.symbol}_${trade.side}_${trade.size}_${trade.price}_${trade.timestamp}`;
   return crypto.createHash("sha256").update(hashInput).digest("hex").substring(0, 16);
 }
 
 /**
- * Fetch all user trades from Supabase first, then sync from Aster API (or Hyperliquid) and save to Supabase.
+ * Detect which exchange is configured based on environment variables
+ */
+function getConfiguredExchange(): "aster" | "binance" | null {
+  // Check for Aster credentials
+  const hasAster = process.env.ASTER_USER_ADDRESS && process.env.ASTER_PRIVATE_KEY;
+  // Check for Binance credentials
+  const hasBinance = process.env.BINANCE_API_KEY && process.env.BINANCE_API_SECRET;
+  
+  // Check EXCHANGE env var first
+  const exchangeEnv = process.env.EXCHANGE?.toLowerCase();
+  if (exchangeEnv === "aster" && hasAster) return "aster";
+  if (exchangeEnv === "binance" && hasBinance) return "binance";
+  
+  // Fallback to what's available
+  if (hasAster) return "aster";
+  if (hasBinance) return "binance";
+  
+  return null;
+}
+
+/**
+ * Fetch all user trades from Supabase first, then sync from Aster/Binance API and save to Supabase.
  * This ensures we always have data even if the API is unavailable.
- * Priority: Aster API > Hyperliquid > Supabase
+ * Priority: Exchange API > Supabase
  */
 export async function GET(req: NextRequest) {
   try {
@@ -72,322 +92,239 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Step 2: Sync from Aster API (priority) or Hyperliquid API (if credentials available)
+    // Step 2: Sync from Exchange API (Aster or Binance) - priority
+    const configuredExchange = getConfiguredExchange();
     const asterEnv = getAsterEnv();
-    const networkFromEnv = process.env.HYPERLIQUID_NETWORK?.toLowerCase().trim() || "mainnet";
-    let env = getHyperliquidEnv();
-    const asterTrades: any[] = [];
-    const hyperliquidTrades: any[] = [];
+    const apiTrades: any[] = [];
     const tradesToSave: any[] = [];
     let apiSource = "supabase";
     
-    // Priority 1: Try Aster API first (uses same wallet credentials as trading agent)
-    if (asterEnv && (forceSync || supabaseTrades.length === 0)) {
-      try {
-        console.log("Fetching trades from Aster API...");
-        // Fetch trades from Aster API using wallet-based authentication
-        // Note: Aster API returns up to 1000 trades by default, can paginate with fromId if needed
-        const asterApiTrades = await getAsterUserTrades(asterEnv, {
-          limit: limit || 1000,
-        });
-        
-        // Map Aster API trade format to our HistoryTrade format
-        // Aster API response format based on documentation:
-        // { id, symbol, side, price, qty, realizedPnl, commission, time, ... }
-        for (const trade of asterApiTrades) {
-          const symbol = trade.symbol || "UNKNOWN";
-          const side = (trade.side === "BUY" || trade.side === "buy") ? "buy" : "sell";
-          const price = Number(trade.price || 0);
-          const size = Number(trade.qty || trade.quantity || 0);
-          const fee = Number(trade.commission || 0);
-          // realizedPnl is the realized profit/loss when position is closed
-          const realizedPnl = trade.realizedPnl != null ? Number(trade.realizedPnl) : null;
-          
-          // Get timestamp (time in milliseconds)
-          let executedAt: string;
-          if (trade.time) {
-            const timeMs = Number(trade.time);
-            // Aster API returns time in milliseconds
-            executedAt = new Date(timeMs > 1e12 ? timeMs : timeMs * 1000).toISOString();
-          } else {
-            executedAt = new Date().toISOString();
-          }
-          
-          const tradeId = trade.id || trade.tradeId || createTradeHash({
-            symbol,
-            side,
-            size,
-            price,
-            timestamp: executedAt,
+    // Priority 1: Try Exchange API (Aster or Binance) based on configuration
+    if ((forceSync || supabaseTrades.length === 0)) {
+      // Try Aster API if configured
+      if (configuredExchange === "aster" && asterEnv) {
+        try {
+          console.log("Fetching trades from Aster API...");
+          const asterApiTrades = await getAsterUserTrades(asterEnv, {
+            limit: limit || 1000,
           });
           
-          const mappedTrade = {
-            id: createTradeHash({
+          // Map Aster API trade format to our HistoryTrade format
+          for (const trade of asterApiTrades) {
+            const symbol = trade.symbol || "UNKNOWN";
+            const side = (trade.side === "BUY" || trade.side === "buy") ? "buy" : "sell";
+            const price = Number(trade.price || 0);
+            const size = Number(trade.qty || trade.quantity || 0);
+            const fee = Number(trade.commission || 0);
+            const realizedPnl = trade.realizedPnl != null ? Number(trade.realizedPnl) : null;
+            
+            let executedAt: string;
+            if (trade.time) {
+              const timeMs = Number(trade.time);
+              executedAt = new Date(timeMs > 1e12 ? timeMs : timeMs * 1000).toISOString();
+            } else {
+              executedAt = new Date().toISOString();
+            }
+            
+            const tradeId = trade.id || trade.tradeId || createTradeHash({
               symbol,
               side,
               size,
               price,
               timestamp: executedAt,
-              tradeId: String(tradeId),
-            }),
-            symbol,
-            side: side as "buy" | "sell",
-            size: Math.abs(size), // Always positive
-            price,
-            fee: Math.abs(fee), // Always positive
-            // Store PnL: null if not realized, otherwise the actual value (can be 0)
-            pnl: realizedPnl !== null ? realizedPnl : null,
-            timestamp: executedAt,
-          };
-          
-          asterTrades.push(mappedTrade);
-          
-          // Prepare for Supabase save
-          tradesToSave.push({
-            symbol,
-            side,
-            size: mappedTrade.size,
-            price: mappedTrade.price,
-            fee: mappedTrade.fee,
-            // Store PnL: null if not realized, otherwise the actual value (can be 0)
-            pnl: realizedPnl !== null ? realizedPnl : null,
-            executed_at: executedAt,
-            order_id: trade.orderId ? String(trade.orderId) : null,
-          });
-        }
-        
-        apiSource = "aster";
-        console.log(`Fetched ${asterTrades.length} trades from Aster API`);
-      } catch (error: any) {
-        console.error("Error fetching Aster API trades:", error.message || error);
-        // Fall through to try Hyperliquid if Aster fails
-      }
-    }
-    
-    // Priority 2: Fall back to Hyperliquid API if Aster is not available or failed
-    if (asterTrades.length === 0 && env && (forceSync || supabaseTrades.length === 0)) {
-      // Ensure baseUrl matches the env var
-      const expectedBaseUrl = networkFromEnv === "testnet" 
-        ? "https://api.hyperliquid-testnet.xyz" 
-        : "https://api.hyperliquid.xyz";
-      
-      if (env.baseUrl !== expectedBaseUrl) {
-        env = { ...env, baseUrl: expectedBaseUrl };
-      }
-
-      try {
-        // Fetch user fills from Hyperliquid
-        const fills = await getHyperliquidUserFills(env, limit);
-        
-        // Map Hyperliquid fill format to our HistoryTrade format
-        for (const fill of fills) {
-          // Hyperliquid fill structure: { coin, px, sz, side, time, closedPnl?, fee?, oid? }
-          const coin = fill.coin || fill.asset || "UNKNOWN";
-          const price = Number(fill.px || fill.price || 0);
-          const size = Number(fill.sz || fill.size || 0);
-          const isBuy = fill.side === "B" || fill.side === "Buy" || fill.isBuy === true || fill.isBuyer === true;
-          const side = isBuy ? "buy" : "sell";
-          
-          // Get realized PnL (closedPnl in Hyperliquid)
-          // closedPnl is only present when a position is closed, representing realized profit/loss
-          // If closedPnl is null/undefined, this trade hasn't realized any PnL yet (position still open)
-          const realizedPnl = fill.closedPnl != null ? Number(fill.closedPnl) : null;
-          
-          // Get timestamp (time in milliseconds or timestamp in seconds)
-          let executedAt: string;
-          if (fill.time) {
-            const timeMs = Number(fill.time);
-            // If timestamp is in seconds (less than 1e12), convert to milliseconds
-            executedAt = new Date(timeMs > 1e12 ? timeMs : timeMs * 1000).toISOString();
-          } else if (fill.timestamp) {
-            const timeMs = Number(fill.timestamp);
-            executedAt = new Date(timeMs > 1e12 ? timeMs : timeMs * 1000).toISOString();
-          } else {
-            executedAt = new Date().toISOString();
-          }
-          
-          const tradeId = fill.oid || fill.id || createTradeHash({
-            symbol: coin,
-            side,
-            size,
-            price,
-            timestamp: executedAt,
-          });
-          
-          const mappedTrade = {
-            id: createTradeHash({
-              symbol: coin,
+              exchange: "aster",
+            });
+            
+            const mappedTrade = {
+              id: createTradeHash({
+                symbol,
               side,
               size,
               price,
               timestamp: executedAt,
               tradeId: String(tradeId),
+              exchange: "aster",
             }),
-            symbol: coin,
-            side: side as "buy" | "sell",
-            size: Math.abs(size), // Always positive
-            price,
-            fee: fill.fee != null ? Number(fill.fee) : 0,
-            // Store PnL: null if not realized, otherwise the actual value (can be 0)
-            pnl: realizedPnl !== null ? realizedPnl : null,
-            timestamp: executedAt,
-          };
+              symbol,
+              side: side as "buy" | "sell",
+              size: Math.abs(size),
+              price,
+              fee: Math.abs(fee),
+              pnl: realizedPnl !== null ? realizedPnl : null,
+              timestamp: executedAt,
+            };
+            
+            apiTrades.push(mappedTrade);
+            tradesToSave.push({
+              symbol,
+              side,
+              size: mappedTrade.size,
+              price: mappedTrade.price,
+              fee: mappedTrade.fee,
+              pnl: realizedPnl !== null ? realizedPnl : null,
+              executed_at: executedAt,
+              order_id: trade.orderId ? String(trade.orderId) : null,
+            });
+          }
           
-          hyperliquidTrades.push(mappedTrade);
+          apiSource = "aster";
+          console.log(`Fetched ${apiTrades.length} trades from Aster API`);
+        } catch (error: any) {
+          console.error("Error fetching Aster API trades:", error.message || error);
+        }
+      }
+      
+      // Try Binance API if configured (via Python backend)
+      if (configuredExchange === "binance") {
+        try {
+          console.log("Fetching trades from Binance API via Python backend...");
+          const pythonApiUrl = process.env.NEXT_PUBLIC_API_URL || process.env.API_URL || "http://localhost:5000";
           
-          // Prepare for Supabase save (save all fills, PnL is null if not realized)
-          tradesToSave.push({
-            symbol: coin,
-            side,
-            size: mappedTrade.size,
-            price: mappedTrade.price,
-            fee: mappedTrade.fee,
-            // Store PnL: null if not realized (closedPnl is null), otherwise the actual value (can be 0)
-            pnl: realizedPnl !== null ? realizedPnl : null,
-            executed_at: executedAt,
-            order_id: fill.oid ? String(fill.oid) : null,
-          });
+          // Note: Binance trades are typically stored in Supabase by the Python agent
+          // If we need to fetch from Binance API directly, we'd need to add a helper function
+          // For now, we rely on Supabase which is populated by the Python agent
+          console.log("Binance trades should be in Supabase (populated by Python agent)");
+        } catch (error: any) {
+          console.error("Error fetching Binance trades:", error.message || error);
+        }
+      }
+    }
+
+    // Step 3: Save new trades to Supabase (deduplicate by checking existing)
+    if (sb && tradesToSave.length > 0) {
+      try {
+        // Get existing trades to deduplicate using composite key
+        const existingKeys = new Set<string>();
+        for (const t of supabaseTrades) {
+          const timestamp = new Date(t.timestamp).getTime();
+          const roundedPrice = Math.round(Number(t.price) * 10000) / 10000;
+          const roundedSize = Math.round(Number(t.size) * 10000) / 10000;
+          existingKeys.add(`${t.symbol}_${t.side}_${timestamp}_${roundedPrice}_${roundedSize}`);
+        }
+        
+        const newTrades = tradesToSave.filter((t) => {
+          const timestamp = new Date(t.executed_at).getTime();
+          const roundedPrice = Math.round(Number(t.price) * 10000) / 10000;
+          const roundedSize = Math.round(Number(t.size) * 10000) / 10000;
+          const key = `${t.symbol}_${t.side}_${timestamp}_${roundedPrice}_${roundedSize}`;
+          return !existingKeys.has(key);
+        });
+
+        if (newTrades.length > 0) {
+          // Use upsert with conflict resolution on a unique constraint if available
+          // For now, use insert but catch duplicate errors
+          try {
+            await sb.from("trades").insert(newTrades as any);
+          } catch (insertError: any) {
+            // If duplicate error, try upsert instead (if table has unique constraint)
+            if (insertError.message?.includes('duplicate') || insertError.code === '23505') {
+              // Fallback: insert one by one to handle duplicates gracefully
+              for (const trade of newTrades) {
+                try {
+                  const { error: tradeError } = await sb.from("trades").insert(trade as any);
+                  if (tradeError) {
+                    // Ignore individual duplicate errors
+                  }
+                } catch {}
+              }
+            } else {
+              throw insertError;
+            }
+          }
+          console.log(`Saved ${newTrades.length} new trades to Supabase`);
+          
+          // Optionally refresh the wins_losses_stats materialized view for performance
+          // This is non-blocking and won't affect the API response
+          try {
+            const { error: rpcError } = await sb.rpc("refresh_wins_losses_stats", {} as any);
+            if (rpcError) {
+              // Silently fail if the function doesn't exist (older migrations)
+            }
+          } catch {
+            // Ignore errors - materialized view refresh is optional
+          }
+          
+          // Sync trades with PnL to portfolio_activities table
+          try {
+            const activitiesToSave: any[] = [];
+            const now = new Date().toISOString();
+            
+            for (const trade of newTrades) {
+              // Save PnL as trade_pnl activity if it exists
+              if (trade.pnl != null) {
+                const pnl = Number(trade.pnl);
+                const tradeId = `${trade.symbol}_${trade.side}_${new Date(trade.executed_at).getTime()}_${trade.price}_${trade.size}`;
+                
+                activitiesToSave.push({
+                  type: "trade_pnl",
+                  amount: pnl.toString(),
+                  symbol: trade.symbol,
+                  description: `Trade P&L: ${trade.symbol} ${trade.side}`,
+                  timestamp: trade.executed_at,
+                  income_id: `trade_pnl_${tradeId}`,
+                  synced_at: now,
+                });
+              }
+              
+              // Save fee as commission activity if it exists and > 0
+              if (trade.fee != null && Number(trade.fee) > 0) {
+                const fee = Number(trade.fee);
+                const tradeId = `${trade.symbol}_${trade.side}_${new Date(trade.executed_at).getTime()}_${trade.price}_${trade.size}`;
+                
+                activitiesToSave.push({
+                  type: "commission",
+                  amount: (-fee).toString(), // Negative because it's a cost
+                  symbol: trade.symbol,
+                  description: `Trading commission: ${trade.symbol} ${trade.side}`,
+                  timestamp: trade.executed_at,
+                  income_id: `commission_${tradeId}`,
+                  synced_at: now,
+                });
+              }
+            }
+            
+            if (activitiesToSave.length > 0) {
+              const { error } = await sb.from("portfolio_activities").upsert(activitiesToSave as any, {
+                onConflict: "income_id",
+                ignoreDuplicates: false,
+              });
+              if (error) {
+                console.error("Error syncing trades to portfolio_activities:", error);
+              }
+              console.log(`Synced ${activitiesToSave.length} trade activities to portfolio_activities`);
+            }
+          } catch (error: any) {
+            console.error("Error syncing trades to portfolio_activities:", error);
+          }
+          
+          // Update account_metrics with latest trade/fee data
+          try {
+            const { data: allTrades } = await sb
+              .from("trades")
+              .select("pnl, fee, executed_at")
+              .not("pnl", "is", null);
+            
+            if (allTrades && Array.isArray(allTrades)) {
+              const typedTrades = allTrades as Array<{ pnl: any; fee: any; executed_at: string }>;
+              const totalPnL = typedTrades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
+              const totalFees = typedTrades.reduce((sum, t) => sum + (Number(t.fee) || 0), 0);
+              
+              const { error: metricsError } = await sb.from("account_metrics").insert({
+                total_pnl: totalPnL,
+                daily_pnl: 0, // Calculate separately
+                total_trades: typedTrades.length,
+                timestamp: new Date().toISOString(),
+              } as any);
+              if (metricsError) {
+                // Ignore duplicate timestamp errors
+              }
+            }
+          } catch {
+            // Ignore errors - metrics update is optional
+          }
         }
       } catch (error: any) {
-        console.error("Error fetching Hyperliquid fills:", error.message || error);
-      }
-
-      // Step 3: Save new trades to Supabase (deduplicate by checking existing)
-      if (sb && tradesToSave.length > 0) {
-        try {
-          // Get existing trades to deduplicate using composite key
-          const existingKeys = new Set<string>();
-          for (const t of supabaseTrades) {
-            const timestamp = new Date(t.timestamp).getTime();
-            const roundedPrice = Math.round(Number(t.price) * 10000) / 10000;
-            const roundedSize = Math.round(Number(t.size) * 10000) / 10000;
-            existingKeys.add(`${t.symbol}_${t.side}_${timestamp}_${roundedPrice}_${roundedSize}`);
-          }
-          
-          const newTrades = tradesToSave.filter((t) => {
-            const timestamp = new Date(t.executed_at).getTime();
-            const roundedPrice = Math.round(Number(t.price) * 10000) / 10000;
-            const roundedSize = Math.round(Number(t.size) * 10000) / 10000;
-            const key = `${t.symbol}_${t.side}_${timestamp}_${roundedPrice}_${roundedSize}`;
-            return !existingKeys.has(key);
-          });
-
-          if (newTrades.length > 0) {
-            // Use upsert with conflict resolution on a unique constraint if available
-            // For now, use insert but catch duplicate errors
-            try {
-              await sb.from("trades").insert(newTrades as any);
-            } catch (insertError: any) {
-              // If duplicate error, try upsert instead (if table has unique constraint)
-              if (insertError.message?.includes('duplicate') || insertError.code === '23505') {
-                // Fallback: insert one by one to handle duplicates gracefully
-                for (const trade of newTrades) {
-                  try {
-                    const { error: tradeError } = await sb.from("trades").insert(trade as any);
-                    if (tradeError) {
-                      // Ignore individual duplicate errors
-                    }
-                  } catch {}
-                }
-              } else {
-                throw insertError;
-              }
-            }
-            console.log(`Saved ${newTrades.length} new trades to Supabase`);
-            
-            // Optionally refresh the wins_losses_stats materialized view for performance
-            // This is non-blocking and won't affect the API response
-            try {
-              const { error: rpcError } = await sb.rpc("refresh_wins_losses_stats", {} as any);
-              if (rpcError) {
-                // Silently fail if the function doesn't exist (older migrations)
-              }
-            } catch {
-              // Ignore errors - materialized view refresh is optional
-            }
-            
-            // Sync trades with PnL to portfolio_activities table
-            try {
-              const activitiesToSave: any[] = [];
-              const now = new Date().toISOString();
-              
-              for (const trade of newTrades) {
-                // Save PnL as trade_pnl activity if it exists
-                if (trade.pnl != null) {
-                  const pnl = Number(trade.pnl);
-                  const tradeId = `${trade.symbol}_${trade.side}_${new Date(trade.executed_at).getTime()}_${trade.price}_${trade.size}`;
-                  
-                  activitiesToSave.push({
-                    type: "trade_pnl",
-                    amount: pnl.toString(),
-                    symbol: trade.symbol,
-                    description: `Trade P&L: ${trade.symbol} ${trade.side}`,
-                    timestamp: trade.executed_at,
-                    income_id: `trade_pnl_${tradeId}`,
-                    synced_at: now,
-                  });
-                }
-                
-                // Save fee as commission activity if it exists and > 0
-                if (trade.fee != null && Number(trade.fee) > 0) {
-                  const fee = Number(trade.fee);
-                  const tradeId = `${trade.symbol}_${trade.side}_${new Date(trade.executed_at).getTime()}_${trade.price}_${trade.size}`;
-                  
-                  activitiesToSave.push({
-                    type: "commission",
-                    amount: (-fee).toString(), // Negative because it's a cost
-                    symbol: trade.symbol,
-                    description: `Trading commission: ${trade.symbol} ${trade.side}`,
-                    timestamp: trade.executed_at,
-                    income_id: `commission_${tradeId}`,
-                    synced_at: now,
-                  });
-                }
-              }
-              
-              if (activitiesToSave.length > 0) {
-                const { error } = await sb.from("portfolio_activities").upsert(activitiesToSave as any, {
-                  onConflict: "income_id",
-                  ignoreDuplicates: false,
-                });
-                if (error) {
-                  console.error("Error syncing trades to portfolio_activities:", error);
-                }
-                console.log(`Synced ${activitiesToSave.length} trade activities to portfolio_activities`);
-              }
-            } catch (error: any) {
-              console.error("Error syncing trades to portfolio_activities:", error);
-            }
-            
-            // Update account_metrics with latest trade/fee data
-            try {
-              const { data: allTrades } = await sb
-                .from("trades")
-                .select("pnl, fee, executed_at")
-                .not("pnl", "is", null);
-              
-              if (allTrades && Array.isArray(allTrades)) {
-                const typedTrades = allTrades as Array<{ pnl: any; fee: any; executed_at: string }>;
-                const totalPnL = typedTrades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
-                const totalFees = typedTrades.reduce((sum, t) => sum + (Number(t.fee) || 0), 0);
-                
-                const { error: metricsError } = await sb.from("account_metrics").insert({
-                  total_pnl: totalPnL,
-                  daily_pnl: 0, // Calculate separately
-                  total_trades: typedTrades.length,
-                  timestamp: new Date().toISOString(),
-                } as any);
-                if (metricsError) {
-                  // Ignore duplicate timestamp errors
-                }
-              }
-            } catch {
-              // Ignore errors - metrics update is optional
-            }
-          }
-        } catch (error: any) {
-          console.error("Error saving trades to Supabase:", error);
-        }
+        console.error("Error saving trades to Supabase:", error);
       }
     }
 
@@ -412,19 +349,11 @@ export async function GET(req: NextRequest) {
       }
     }
     
-    // Add/overwrite with API trades (Aster first, then Hyperliquid - newer, more accurate data)
-    for (const trade of asterTrades) {
+    // Add/overwrite with API trades (newer, more accurate data)
+    for (const trade of apiTrades) {
       const compositeKey = getCompositeKey(trade);
-      // Overwrite if exists (Aster data is most accurate)
+      // Overwrite if exists (API data is most accurate)
       allTradesMap.set(compositeKey, trade);
-    }
-    
-    for (const trade of hyperliquidTrades) {
-      const compositeKey = getCompositeKey(trade);
-      // Only add if not already present from Aster
-      if (!allTradesMap.has(compositeKey)) {
-        allTradesMap.set(compositeKey, trade);
-      }
     }
 
     // Convert to array and sort all trades by timestamp (newest first)
@@ -438,8 +367,8 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ 
       trades: uniqueTrades,
-      source: asterTrades.length > 0 ? "aster" : (hyperliquidTrades.length > 0 ? "hyperliquid" : "supabase"),
-      synced: asterTrades.length > 0 || hyperliquidTrades.length > 0,
+      source: apiTrades.length > 0 ? (configuredExchange || "unknown") : "supabase",
+      synced: apiTrades.length > 0,
     });
   } catch (error: any) {
     console.error("Error fetching trades history:", error);
@@ -449,4 +378,3 @@ export async function GET(req: NextRequest) {
     );
   }
 }
-

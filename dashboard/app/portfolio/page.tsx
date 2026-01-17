@@ -3,7 +3,6 @@ import type { Transaction } from "@/components/portfolio/molecules/TransactionIt
 import type { Asset } from "@/components/portfolio/organisms/AssetsList";
 import { headers } from "next/headers";
 import { getAsterEnv } from "@/lib/aster";
-import { getHyperliquidEnv } from "@/lib/hyperliquid";
 
 // Asset name mapping
 const ASSET_NAMES: Record<string, string> = {
@@ -43,23 +42,19 @@ async function fetchPortfolioData() {
     base = process.env.NEXT_PUBLIC_BASE_URL?.replace(/\/$/, "") || "http://localhost:3001";
   }
 
-  // Determine which exchange is configured (Aster takes priority)
+  // Determine which exchange is configured
   const asterEnv = getAsterEnv();
-  const hyperliquidEnv = getHyperliquidEnv();
-  const exchange = asterEnv ? "aster" : (hyperliquidEnv ? "hyperliquid" : null);
+  const binanceEnv = process.env.BINANCE_API_KEY && process.env.BINANCE_API_SECRET;
+  const exchange = asterEnv ? "aster" : (binanceEnv ? "binance" : null);
   
   // Fetch balances, prices, and balance history in parallel
-  const network = process.env.HYPERLIQUID_NETWORK || "mainnet";
-  const balancesEndpoint = exchange === "aster" 
+  // Both Aster and Binance use the Python backend which handles exchange detection
+  const balancesEndpoint = exchange === "aster" || exchange === "binance"
     ? `${base}/api/aster/balances`
-    : exchange === "hyperliquid"
-    ? `${base}/api/hyperliquid/balances`
     : null;
   
-  // Note: Aster sync-balance endpoint may not exist yet, so we'll handle errors gracefully
-  const balanceHistoryEndpoint = exchange === "hyperliquid"
-    ? `${base}/api/hyperliquid/sync-balance?network=${network}&hours=720`
-    : null; // Aster balance history can be queried directly from Supabase if needed
+  // Note: Balance history can be queried directly from Supabase if needed
+  const balanceHistoryEndpoint = null;
 
   const [balancesRes, pricesRes, balanceHistoryRes] = await Promise.all([
     balancesEndpoint ? fetch(balancesEndpoint, { cache: "no-store" }) : Promise.resolve(new Response(JSON.stringify({ balances: [], error: "No exchange configured" }), { status: 400 })),

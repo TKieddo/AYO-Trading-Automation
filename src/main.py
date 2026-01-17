@@ -87,7 +87,7 @@ def get_interval_seconds(interval_str):
 def main():
     """Parse CLI args, bootstrap dependencies, and launch the trading loop."""
     clear_terminal()
-    parser = argparse.ArgumentParser(description="LLM-based Trading Agent on Hyperliquid")
+    parser = argparse.ArgumentParser(description="LLM-based Trading Agent")
     parser.add_argument("--assets", type=str, nargs="+", required=False, help="Assets to trade, e.g., BTC ETH")
     parser.add_argument("--interval", type=str, required=False, help="Interval period, e.g., 1h")
     args = parser.parse_args()
@@ -148,10 +148,7 @@ def main():
                     logging.info(f"✅ Using Binance Futures ({'testnet' if testnet else 'mainnet'})")
                 except ValueError as e2:
                     logging.error(f"❌ Failed to initialize Binance: {e2}")
-                    logging.info("💡 Falling back to Hyperliquid...")
-                    from src.trading.hyperliquid_api import HyperliquidAPI
-                    exchange = HyperliquidAPI()
-                    exchange_name = "hyperliquid"
+                    raise ValueError(f"Failed to initialize any exchange. Aster: {e}, Binance: {e2}")
         elif exchange_name == "binance":
             from src.trading.binance_api import BinanceAPI
             try:
@@ -161,27 +158,13 @@ def main():
             except ValueError as e:
                 logging.error(f"❌ Failed to initialize Binance: {e}")
                 raise ValueError(f"Binance initialization failed: {e}")
-        elif exchange_name == "hyperliquid":
-            from src.trading.hyperliquid_api import HyperliquidAPI
-            exchange = HyperliquidAPI()
-            network = CONFIG.get("hyperliquid_network", "mainnet")
-            logging.info(f"✅ Using Hyperliquid ({network})")
-        elif exchange_name == "pepperstone":
-            from src.trading.pepperstone_api import PepperstoneAPI
-            try:
-                exchange = PepperstoneAPI()
-                environment = CONFIG.get("pepperstone_environment", "demo")
-                logging.info(f"✅ Using Pepperstone cTrader ({environment})")
-            except (ValueError, ImportError) as e:
-                logging.error(f"❌ Failed to initialize Pepperstone: {e}")
-                raise ValueError(f"Pepperstone initialization failed: {e}")
         else:
-            raise ValueError(f"Unknown exchange: {exchange_name}. Use 'aster', 'binance', 'hyperliquid', or 'pepperstone'")
-    
-    # Use 'exchange' as the variable name throughout (aliased for compatibility)
-    # Keep 'hyperliquid' variable name for backward compatibility in code
-    hyperliquid = exchange
+            raise ValueError(f"Unknown exchange: {exchange_name}. Use 'aster' or 'binance'")
+        
         exchange_manager = None
+    
+    # Use 'exchange' as the variable name throughout (aliased for backward compatibility)
+    hyperliquid = exchange  # Keep for backward compatibility in code
     
     # Initialize trading strategy using factory
     strategy_name = CONFIG.get("strategy")
@@ -214,19 +197,6 @@ def main():
                 logging.info(f"📍 User Address (main): {user_address}")
                 logging.info(f"📍 Signer Address (API): {signer_address}")
                 logging.info(f"🔗 View on Aster: https://www.asterdex.com/en")
-            else:  # hyperliquid
-                api_wallet_address = hyperliquid.wallet.address
-                main_wallet_address = hyperliquid.main_wallet_address
-                network = CONFIG.get("hyperliquid_network", "mainnet")
-                
-                logging.info(f"📍 API Wallet (for signing): {api_wallet_address}")
-                if main_wallet_address:
-                    logging.info(f"📍 Main Wallet (for balances): {main_wallet_address}")
-                    network_url = "testnet" if network == "testnet" else "app"
-                    logging.info(f"🔗 View on Hyperliquid: https://{network_url}.hyperliquid.xyz/portfolio/{main_wallet_address}")
-                else:
-                    logging.info(f"🔗 View on Hyperliquid: https://{'testnet' if network == 'testnet' else 'app'}.hyperliquid.xyz/portfolio/{api_wallet_address}")
-            
             state = await hyperliquid.get_user_state()
             balance = state.get('balance', 0)
             total_value = state.get('total_value', 0)
@@ -245,9 +215,9 @@ def main():
             if exchange_name == "aster":
                 logging.info("💡 Note: Make sure your API wallet is authorized in Aster dashboard")
                 logging.info("   If trades fail, check that the API wallet has proper permissions")
-            else:
-                logging.info("💡 Note: Make sure your API wallet is authorized in Hyperliquid dashboard")
-                logging.info("   If trades fail, check that the API wallet is approved in your account settings")
+            elif exchange_name == "binance":
+                logging.info("💡 Note: Make sure your Binance API keys have Futures trading permissions enabled")
+                logging.info("   If trades fail, check that your API keys have the correct permissions in Binance settings")
         except Exception as e:
             logging.error(f"❌ Failed to fetch wallet balance on startup: {e}")
             logging.warning("⚠️  Trading agent will continue, but verify your wallet connection")
@@ -1328,7 +1298,7 @@ def main():
             logging.debug(f"Exchange returned {len(state.get('positions', []))} position(s)")
             
             for pos in state.get('positions', []):
-                # Extract position data (works for both Binance and Hyperliquid formats)
+                # Extract position data (works for both Aster and Binance formats)
                 coin = pos.get('coin') or pos.get('symbol', '')
                 szi = pos.get('szi') or pos.get('positionAmt') or pos.get('quantity', 0)
                 entry_px = pos.get('entryPx') or pos.get('entryPrice') or pos.get('entry_price', 0)
@@ -1404,9 +1374,13 @@ def main():
             if exchange_name == "aster":
                 network_label = "Aster DEX"
                 network = "mainnet"
+            elif exchange_name == "binance":
+                testnet = CONFIG.get("binance_testnet", False)
+                network_label = f"Binance Futures ({'testnet' if testnet else 'mainnet'})"
+                network = "testnet" if testnet else "mainnet"
             else:
-                network = CONFIG.get("hyperliquid_network", "mainnet")
-                network_label = f"Hyperliquid {network}"
+                network_label = exchange_name
+                network = "mainnet"
             
             return web.json_response({
                 "connected": True,
@@ -1818,7 +1792,7 @@ def main():
             # For futures: size = allocation_usd / price
             position_size = allocation_usd / current_price
             
-            # Round position size (Aster requires async, Hyperliquid is sync - both work with await)
+            # Round position size (Aster requires async, Binance is sync - both work with await)
             if hasattr(hyperliquid, 'round_size') and asyncio.iscoroutinefunction(hyperliquid.round_size):
                 position_size = await hyperliquid.round_size(asset, position_size)
             else:
@@ -1836,13 +1810,13 @@ def main():
                 else:
                     order_result = await hyperliquid.place_sell_order(asset, position_size)
                 
-                # Check if order was successful (Aster and Hyperliquid have different response formats)
+                # Check if order was successful (Aster and Binance have different response formats)
                 if isinstance(order_result, dict):
                     # Aster format: direct response with orderId
                     if "orderId" in order_result:
                         # Aster - order is successful if orderId exists
                         pass
-                    # Hyperliquid format: nested status
+                    # Binance format: nested status
                     elif order_result.get("status") != "ok":
                         error_msg = order_result.get("response", {}).get("error", "Unknown error")
                         logging.error(f"❌ Alert trade failed for {asset}: {error_msg}")
@@ -1859,7 +1833,7 @@ def main():
                         # Aster format: direct orderId
                         if "orderId" in tp_result:
                             tp_oid = tp_result.get("orderId")
-                        # Hyperliquid format: nested response
+                        # Binance format: nested response
                         elif tp_result.get("status") == "ok":
                             response_data = tp_result.get("response", {}).get("data", {})
                             statuses = response_data.get("statuses", [])
@@ -1881,7 +1855,7 @@ def main():
                         # Aster format: direct orderId
                         if "orderId" in sl_result:
                             sl_oid = sl_result.get("orderId")
-                        # Hyperliquid format: nested response
+                        # Binance format: nested response
                         elif sl_result.get("status") == "ok":
                             response_data = sl_result.get("response", {}).get("data", {})
                             statuses = response_data.get("statuses", [])

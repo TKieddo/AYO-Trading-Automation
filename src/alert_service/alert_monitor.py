@@ -16,18 +16,19 @@ class AlertMonitor:
         """Initialize alert monitor with configuration."""
         self.logger = logging.getLogger("alert.monitor")
         
-        # Initialize exchange based on CONFIG (Aster or Hyperliquid)
+        # Initialize exchange based on CONFIG (Aster or Binance)
         exchange_name = CONFIG.get("exchange", "aster").lower()
         if exchange_name == "aster":
             from src.trading.aster_api import AsterAPI
             self.exchange = AsterAPI()
             self.logger.info("Using Aster DEX for alert service")
-        elif exchange_name == "hyperliquid":
-            from src.trading.hyperliquid_api import HyperliquidAPI
-            self.exchange = HyperliquidAPI()
-            self.logger.info("Using Hyperliquid for alert service")
+        elif exchange_name == "binance":
+            from src.trading.binance_api import BinanceAPI
+            self.exchange = BinanceAPI()
+            testnet = CONFIG.get("binance_testnet", False)
+            self.logger.info(f"Using Binance Futures ({'testnet' if testnet else 'mainnet'}) for alert service")
         else:
-            raise ValueError(f"Unknown exchange: {exchange_name}. Use 'aster' or 'hyperliquid'")
+            raise ValueError(f"Unknown exchange: {exchange_name}. Use 'aster' or 'binance'")
         
         # Configuration
         self.check_interval = CONFIG.get("ALERT_CHECK_INTERVAL", 5)  # seconds

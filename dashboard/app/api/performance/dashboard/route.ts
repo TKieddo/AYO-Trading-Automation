@@ -40,10 +40,9 @@ interface PerformanceResponse {
  * Groups trades by day and calculates win/loss statistics.
  * Returns all-time totals and daily breakdowns.
  * 
- * Caching: 10 seconds revalidation for fresh data
+ * No caching - always returns fresh data
  */
 export const dynamic = 'force-dynamic'; // Mark as dynamic route
-export const revalidate = 10; // Cache for 10 seconds
 
 export async function GET() {
   try {

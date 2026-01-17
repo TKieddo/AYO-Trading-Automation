@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase/client";
-import { cacheGet, cacheSet } from "@/lib/http";
 import { persistPrices } from "@/lib/supabase/persist";
 
 const BASE = (process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3001").replace(/\/$/, "");

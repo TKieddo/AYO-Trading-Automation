@@ -596,3 +596,51 @@ class BinanceAPI:
             logger.error(f"Error cancelling order {oid} for {asset}: {e}")
             raise
 
+    async def cancel_all_orders(self, asset: str):
+        """Cancel all open orders for an asset."""
+        symbol = self._to_futures_symbol(asset)
+        try:
+            return await self._retry(
+                lambda: self.client.futures_cancel_all_open_orders(symbol=symbol)
+            )
+        except Exception as e:
+            logger.error(f"Error cancelling all orders for {asset}: {e}")
+            raise
+
+    async def round_size(self, asset: str, amount: float) -> float:
+        """Round order size to asset precision based on LOT_SIZE filter.
+        
+        Args:
+            asset: Asset symbol (e.g., 'BTC')
+            amount: Desired size before rounding
+            
+        Returns:
+            Rounded size
+        """
+        symbol = self._to_futures_symbol(asset)
+        try:
+            exchange_info = await self._retry(lambda: self.client.futures_exchange_info())
+            symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
+            
+            if symbol_info:
+                # Get step size from LOT_SIZE filter
+                step_size = None
+                for filt in symbol_info.get('filters', []):
+                    if filt.get('filterType') == 'LOT_SIZE':
+                        step_size = float(filt.get('stepSize', '0.001'))
+                        break
+                
+                if step_size and step_size > 0:
+                    # Round down to step size multiple
+                    rounded = (amount // step_size) * step_size
+                    # Format to appropriate precision
+                    precision = len(str(step_size).split('.')[-1].rstrip('0'))
+                    return round(rounded, precision)
+            
+            # Fallback: round to 3 decimals
+            logger.warning(f"⚠️  Precision not found for {symbol}, using default 3 decimals")
+            return round(amount, 3)
+        except Exception as e:
+            logger.error(f"Error rounding size for {asset}: {e}")
+            return round(amount, 3)
+

@@ -114,7 +114,70 @@ export async function persistDecisions(rows: any[]) {
       timestamp: d.timestamp ?? new Date().toISOString(),
     }));
     await supabase.from("decisions").upsert(mapped as any, { onConflict: "id" });
-  } catch {}
+    
+    // Cleanup old decisions (older than 10 days) - run periodically but not every time
+    // Only run cleanup 5% of the time to avoid overhead (runs ~1 in 20 requests)
+    if (Math.random() < 0.05) {
+      cleanupOldDecisions().catch((err) => {
+        console.error("Background cleanup error:", err);
+      });
+    }
+  } catch (error) {
+    console.error("Error persisting decisions:", error);
+  }
+}
+
+/**
+ * Delete decisions older than 10 days to prevent database buildup
+ * 
+ * This function automatically removes decisions that are older than 10 days
+ * to keep the database size manageable. It's called periodically when
+ * decisions are persisted, and can also be called manually via the cleanup API.
+ * 
+ * @returns Promise that resolves with the number of deleted decisions
+ */
+export async function cleanupOldDecisions(): Promise<number> {
+  const supabase = getServerSupabase();
+  if (!supabase) {
+    console.warn("Supabase not available for cleanup");
+    return 0;
+  }
+  
+  try {
+    // Calculate cutoff date (10 days ago)
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - 10);
+    cutoffDate.setHours(0, 0, 0, 0); // Start of day for consistency
+    const cutoffISO = cutoffDate.toISOString();
+    
+    // First, count how many will be deleted (for logging)
+    const { count: countBefore } = await supabase
+      .from("decisions")
+      .select("*", { count: "exact", head: true })
+      .lt("timestamp", cutoffISO);
+    
+    // Delete decisions older than 10 days
+    const { error, count } = await supabase
+      .from("decisions")
+      .delete()
+      .lt("timestamp", cutoffISO)
+      .select("*", { count: "exact", head: false });
+    
+    if (error) {
+      console.error("Error cleaning up old decisions:", error);
+      return 0;
+    }
+    
+    const deletedCount = count || countBefore || 0;
+    if (deletedCount > 0) {
+      console.log(`✅ Cleaned up ${deletedCount} decision(s) older than 10 days (cutoff: ${cutoffISO})`);
+    }
+    
+    return deletedCount;
+  } catch (error) {
+    console.error("Error in cleanupOldDecisions:", error);
+    return 0;
+  }
 }
 
 export async function persistLogs(rows: any[]) {
