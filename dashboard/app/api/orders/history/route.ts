@@ -152,6 +152,7 @@ export async function GET(req: NextRequest) {
       } catch (error: any) {
         console.error("Error fetching Aster API orders:", error.message || error);
       }
+      } // Close if (asterEnv) block
       
       // Priority 2: Binance orders are stored in Supabase by the Python agent
       // They should already be in Supabase from the Python agent during trading
