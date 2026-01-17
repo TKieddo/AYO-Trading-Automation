@@ -59,99 +59,99 @@ export async function GET(req: NextRequest) {
     if (forceSync || supabaseOrders.length === 0) {
       // Priority 1: Try Aster API if configured
       if (asterEnv) {
-      try {
-        console.log("Fetching orders from Aster API...");
-        // Fetch all orders from Aster API (includes open, filled, canceled, etc.)
-        // Use a high limit or no limit to get all historical orders
-        const asterApiOrders = await getAsterAllOrders(asterEnv, {
-          limit: limit || 10000, // Increased limit to get more historical orders
-        });
-        
-        console.log(`Aster API returned ${asterApiOrders.length} orders`);
-        
-        // Map Aster API order format to our HistoryOrder format
-        // Aster API response format: { orderId, symbol, side, type, price, origQty, executedQty, status, time, ... }
-        for (const order of asterApiOrders) {
-          const symbol = order.symbol || "UNKNOWN";
-          const side = (order.side === "BUY" || order.side === "buy") ? "buy" : "sell";
-          const orderType = (order.type === "LIMIT" || order.type === "limit") ? "limit" : "market";
-          const price = order.price != null ? Number(order.price) : undefined;
-          const size = Number(order.origQty || order.quantity || order.size || 0);
-          const executedQty = Number(order.executedQty || order.filledQty || 0);
-          
-          // Map Aster order status to our status format
-          // Aster statuses: NEW, PARTIALLY_FILLED, FILLED, CANCELED, REJECTED, EXPIRED, PENDING_CANCEL
-          let orderStatus: "open" | "filled" | "canceled" | "rejected" | "triggered" = "open";
-          const status = (order.status || "").toUpperCase();
-          
-          // First, check the actual order status from API
-          if (status === "FILLED") {
-            orderStatus = "filled";
-          } else if (status === "PARTIALLY_FILLED") {
-            // Partially filled orders are still "open" if not fully filled
-            orderStatus = executedQty >= size ? "filled" : "open";
-          } else if (status === "CANCELED" || status === "PENDING_CANCEL" || status === "EXPIRED") {
-            orderStatus = "canceled";
-          } else if (status === "REJECTED") {
-            orderStatus = "rejected";
-          } else if (status === "NEW" || status === "") {
-            orderStatus = "open";
-          }
-          
-          // Only mark as "triggered" if it's actually a stop/trigger order AND status is still open
-          // Don't override filled/canceled/rejected orders
-          if (orderStatus === "open" && (order.stopPrice || order.triggerPrice || order.activationPrice || order.stopLossPrice || order.takeProfitPrice)) {
-            orderStatus = "triggered";
-          }
-          
-          // Get timestamp (time in milliseconds)
-          let createdAt: string;
-          if (order.time) {
-            const timeMs = Number(order.time);
-            createdAt = new Date(timeMs > 1e12 ? timeMs : timeMs * 1000).toISOString();
-          } else if (order.updateTime) {
-            const timeMs = Number(order.updateTime);
-            createdAt = new Date(timeMs > 1e12 ? timeMs : timeMs * 1000).toISOString();
-          } else {
-            createdAt = new Date().toISOString();
-          }
-          
-          const orderId = String(order.orderId || order.id || "");
-          
-          const mappedOrder = {
-            id: orderId || `aster_${symbol}_${createdAt}`,
-            symbol,
-            side: side as "buy" | "sell",
-            type: orderType as "market" | "limit",
-            size: Math.abs(size),
-            price: price && price > 0 ? price : undefined,
-            status: orderStatus,
-            createdAt,
-            updatedAt: order.updateTime ? new Date(Number(order.updateTime) > 1e12 ? Number(order.updateTime) : Number(order.updateTime) * 1000).toISOString() : createdAt,
-          };
-          
-          apiOrders.push(mappedOrder);
-          
-          // Prepare for Supabase save
-          ordersToSave.push({
-            order_id: orderId || mappedOrder.id,
-            symbol,
-            side,
-            type: orderType,
-            size: mappedOrder.size,
-            price: mappedOrder.price,
-            status: orderStatus,
-            filled_size: executedQty,
-            created_at: createdAt,
-            updated_at: mappedOrder.updatedAt,
+        try {
+          console.log("Fetching orders from Aster API...");
+          // Fetch all orders from Aster API (includes open, filled, canceled, etc.)
+          // Use a high limit or no limit to get all historical orders
+          const asterApiOrders = await getAsterAllOrders(asterEnv, {
+            limit: limit || 10000, // Increased limit to get more historical orders
           });
+          
+          console.log(`Aster API returned ${asterApiOrders.length} orders`);
+          
+          // Map Aster API order format to our HistoryOrder format
+          // Aster API response format: { orderId, symbol, side, type, price, origQty, executedQty, status, time, ... }
+          for (const order of asterApiOrders) {
+            const symbol = order.symbol || "UNKNOWN";
+            const side = (order.side === "BUY" || order.side === "buy") ? "buy" : "sell";
+            const orderType = (order.type === "LIMIT" || order.type === "limit") ? "limit" : "market";
+            const price = order.price != null ? Number(order.price) : undefined;
+            const size = Number(order.origQty || order.quantity || order.size || 0);
+            const executedQty = Number(order.executedQty || order.filledQty || 0);
+            
+            // Map Aster order status to our status format
+            // Aster statuses: NEW, PARTIALLY_FILLED, FILLED, CANCELED, REJECTED, EXPIRED, PENDING_CANCEL
+            let orderStatus: "open" | "filled" | "canceled" | "rejected" | "triggered" = "open";
+            const status = (order.status || "").toUpperCase();
+            
+            // First, check the actual order status from API
+            if (status === "FILLED") {
+              orderStatus = "filled";
+            } else if (status === "PARTIALLY_FILLED") {
+              // Partially filled orders are still "open" if not fully filled
+              orderStatus = executedQty >= size ? "filled" : "open";
+            } else if (status === "CANCELED" || status === "PENDING_CANCEL" || status === "EXPIRED") {
+              orderStatus = "canceled";
+            } else if (status === "REJECTED") {
+              orderStatus = "rejected";
+            } else if (status === "NEW" || status === "") {
+              orderStatus = "open";
+            }
+            
+            // Only mark as "triggered" if it's actually a stop/trigger order AND status is still open
+            // Don't override filled/canceled/rejected orders
+            if (orderStatus === "open" && (order.stopPrice || order.triggerPrice || order.activationPrice || order.stopLossPrice || order.takeProfitPrice)) {
+              orderStatus = "triggered";
+            }
+            
+            // Get timestamp (time in milliseconds)
+            let createdAt: string;
+            if (order.time) {
+              const timeMs = Number(order.time);
+              createdAt = new Date(timeMs > 1e12 ? timeMs : timeMs * 1000).toISOString();
+            } else if (order.updateTime) {
+              const timeMs = Number(order.updateTime);
+              createdAt = new Date(timeMs > 1e12 ? timeMs : timeMs * 1000).toISOString();
+            } else {
+              createdAt = new Date().toISOString();
+            }
+            
+            const orderId = String(order.orderId || order.id || "");
+            
+            const mappedOrder = {
+              id: orderId || `aster_${symbol}_${createdAt}`,
+              symbol,
+              side: side as "buy" | "sell",
+              type: orderType as "market" | "limit",
+              size: Math.abs(size),
+              price: price && price > 0 ? price : undefined,
+              status: orderStatus,
+              createdAt,
+              updatedAt: order.updateTime ? new Date(Number(order.updateTime) > 1e12 ? Number(order.updateTime) : Number(order.updateTime) * 1000).toISOString() : createdAt,
+            };
+            
+            apiOrders.push(mappedOrder);
+            
+            // Prepare for Supabase save
+            ordersToSave.push({
+              order_id: orderId || mappedOrder.id,
+              symbol,
+              side,
+              type: orderType,
+              size: mappedOrder.size,
+              price: mappedOrder.price,
+              status: orderStatus,
+              filled_size: executedQty,
+              created_at: createdAt,
+              updated_at: mappedOrder.updatedAt,
+            });
+          }
+          
+          sources.push("aster");
+          console.log(`Fetched ${apiOrders.length} orders from Aster API`);
+        } catch (error: any) {
+          console.error("Error fetching Aster API orders:", error.message || error);
         }
-        
-        sources.push("aster");
-        console.log(`Fetched ${apiOrders.length} orders from Aster API`);
-      } catch (error: any) {
-        console.error("Error fetching Aster API orders:", error.message || error);
-      }
       } // Close if (asterEnv) block
       
       // Priority 2: Binance orders are stored in Supabase by the Python agent
