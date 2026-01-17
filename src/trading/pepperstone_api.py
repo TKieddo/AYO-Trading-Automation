@@ -41,12 +41,12 @@ class PepperstoneAPI:
             )
         
         # cTrader Open API endpoints
-        # Demo: https://openapi-demo.ctrader.com
-        # Live: https://openapi.ctrader.com
-        if self.environment == "live":
-            self.api_url = "https://openapi.ctrader.com"
-        else:
-            self.api_url = "https://openapi-demo.ctrader.com"
+        # Authentication and API use the same base URL
+        # Demo/live distinction is based on account credentials, not URL
+        # Both demo and live accounts use the same API URL
+        self.api_url = "https://openapi.ctrader.com"
+        
+        # Note: Some brokers may have different endpoints, but Pepperstone uses standard cTrader Open API
         
         # Cache for symbol info
         self._symbol_cache = {}
@@ -60,6 +60,15 @@ class PepperstoneAPI:
         logging.info(f"   - Environment: {self.environment}")
         logging.info(f"   - API URL: {self.api_url}")
         logging.info(f"   - Account ID: {self.account_id}")
+        logging.info(f"   - Client ID: {self.client_id[:10]}..." if self.client_id and len(self.client_id) > 10 else f"   - Client ID: {self.client_id}")
+        
+        # Validate account ID format
+        if self.account_id:
+            try:
+                # Account ID should be numeric
+                int(self.account_id)
+            except ValueError:
+                logging.warning(f"⚠️  Account ID '{self.account_id}' may not be in correct format (should be numeric)")
     
     async def _authenticate(self):
         """Authenticate and get access token."""
@@ -81,15 +90,78 @@ class PepperstoneAPI:
                 "scope": "trading"
             }
             
+            # cTrader Open API uses OAuth2 client credentials flow
+            # Endpoint: /connect/token (standard OAuth2)
+            auth_url = f"{self.api_url}/connect/token"
+            
+            logging.debug(f"Attempting authentication to: {auth_url}")
+            logging.debug(f"Client ID: {self.client_id[:10]}...}" if self.client_id and len(self.client_id) > 10 else f"Client ID: {self.client_id}")
+            
             async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.api_url}/connect/token",
-                    headers=headers,
-                    data=data
-                ) as resp:
-                    if not resp.ok:
-                        text = await resp.text()
-                        raise Exception(f"Pepperstone auth error {resp.status}: {text}")
+                try:
+                    async with session.post(
+                        auth_url,
+                        headers=headers,
+                        data=data,
+                        timeout=aiohttp.ClientTimeout(total=15)
+                    ) as resp:
+                        response_text = await resp.text()
+                        
+                        if not resp.ok:
+                            # Provide helpful error messages
+                            if resp.status == 404:
+                                error_msg = (
+                                    f"❌ Authentication endpoint not found (404).\n"
+                                    f"   This usually means:\n"
+                                    f"   1. The API URL is incorrect\n"
+                                    f"   2. Your Client ID/Secret are from a different broker\n"
+                                    f"   3. The cTrader Open API structure has changed\n\n"
+                                    f"   Tried: {auth_url}\n"
+                                    f"   Response: {response_text[:300]}\n\n"
+                                    f"   💡 Solution: Verify your credentials are from cTrader Open API portal\n"
+                                    f"   and that they're for Pepperstone (not another broker using cTrader)"
+                                )
+                                raise Exception(error_msg)
+                            elif resp.status == 401:
+                                error_msg = (
+                                    f"❌ Authentication failed (401 - Unauthorized).\n"
+                                    f"   This means your Client ID or Client Secret is incorrect.\n\n"
+                                    f"   💡 Check:\n"
+                                    f"   1. Client ID matches what you got from cTrader Open API portal\n"
+                                    f"   2. Client Secret is correct (no extra spaces)\n"
+                                    f"   3. Credentials are for the correct environment (demo/live)\n"
+                                    f"   4. Application has 'trading' scope enabled"
+                                )
+                                raise Exception(error_msg)
+                            else:
+                                raise Exception(f"Pepperstone auth error {resp.status}: {response_text[:500]}")
+                        
+                        result = await resp.json()
+                        self._access_token = result.get("access_token")
+                        expires_in = result.get("expires_in", 3600)
+                        self._token_expires_at = time.time() + expires_in - 60
+                        
+                        logging.info("✅ Pepperstone authentication successful")
+                        return self._access_token
+                        
+                except aiohttp.ClientError as e:
+                    error_str = str(e)
+                    if "getaddrinfo failed" in error_str or "Cannot connect" in error_str:
+                        error_msg = (
+                            f"❌ Cannot connect to cTrader API: {error_str}\n\n"
+                            f"   This usually means:\n"
+                            f"   1. No internet connection\n"
+                            f"   2. Firewall/VPN blocking the connection\n"
+                            f"   3. DNS resolution failure\n"
+                            f"   4. The API URL is incorrect\n\n"
+                            f"   💡 Try:\n"
+                            f"   - Check your internet connection\n"
+                            f"   - Disable VPN if using one\n"
+                            f"   - Try accessing https://openapi.ctrader.com in your browser\n"
+                            f"   - Contact Pepperstone support to verify API access"
+                        )
+                        raise Exception(error_msg)
+                    raise
                     
                     result = await resp.json()
                     self._access_token = result.get("access_token")
