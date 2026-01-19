@@ -60,9 +60,23 @@ export function BalanceWidget({ currency, balance, availableBalance, delta, delt
 }
 
 function PeriodMetric({ period, change }: { period: string; change: number }) {
-  const isPositive = change >= 0;
+  // Ensure change is a valid number, handle NaN, Infinity, and null
+  const validChange = (change != null && !isNaN(change) && isFinite(change)) ? change : 0;
+  
+  // Handle -0 case: convert -0 to 0
+  const normalizedChange = Object.is(validChange, -0) ? 0 : validChange;
+  
+  // Round very small values to 0 to avoid showing "-0.0%"
+  const displayChange = Math.abs(normalizedChange) < 0.01 ? 0 : normalizedChange;
+  
+  const isPositive = displayChange >= 0;
   const colorClass = isPositive ? 'text-emerald-700' : 'text-orange-500';
   const bgClass = isPositive ? 'bg-emerald-50' : 'bg-orange-50';
+  
+  // Format percentage with proper sign (avoid showing -0.0%)
+  const formattedChange = displayChange === 0 
+    ? '0.0%' 
+    : (isPositive ? `+${displayChange.toFixed(1)}%` : `${displayChange.toFixed(1)}%`);
   
   return (
     <div className="flex flex-col items-center justify-center gap-2 py-4">
@@ -73,7 +87,7 @@ function PeriodMetric({ period, change }: { period: string; change: number }) {
           <TrendingDown className={`h-3.5 w-3.5 ${colorClass}`} />
         )}
         <span className={`text-xs font-semibold ${colorClass}`}>
-          {isPositive ? '+' : ''}{change.toFixed(1)}%
+          {formattedChange}
         </span>
       </div>
       <span className="text-xs font-medium text-slate-600">{period}</span>

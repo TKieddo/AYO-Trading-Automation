@@ -209,14 +209,16 @@ export function PortfolioActivityTimeline({ user }: PortfolioActivityTimelinePro
         }
       }
 
-      // Fetch trades with PnL
-      const tradesResponse = await fetch("/api/trades/history?limit=50");
+      // Fetch trades with PnL and commissions
+      const tradesResponse = await fetch("/api/trades/history?limit=100");
       let tradeActivities: ActivityItem[] = [];
+      let commissionActivities: ActivityItem[] = [];
       
       if (tradesResponse.ok) {
         const tradesData = await tradesResponse.json();
         if (tradesData.trades && Array.isArray(tradesData.trades)) {
-          tradeActivities = tradesData.trades
+          // Process PnL activities
+          const pnlTrades = tradesData.trades
             .filter((trade: any) => trade.pnl != null && trade.pnl !== 0)
             .map((trade: any) => {
               const pnl = Number(trade.pnl || 0);
@@ -225,7 +227,7 @@ export function PortfolioActivityTimeline({ user }: PortfolioActivityTimelinePro
               const displayInfo = getActivityDisplayInfo(type, pnl);
               
               return {
-                id: `trade-${trade.id || trade.timestamp}`,
+                id: `trade-pnl-${trade.id || trade.timestamp}`,
                 type: type as ActivityItem["type"],
                 timestamp: trade.timestamp,
                 title: displayInfo.title,
@@ -241,11 +243,36 @@ export function PortfolioActivityTimeline({ user }: PortfolioActivityTimelinePro
                 details: `Realized P&L from ${trade.symbol} ${trade.side} position`,
               };
             });
+          
+          tradeActivities = pnlTrades;
+          
+          // Process commission activities from trades
+          commissionActivities = tradesData.trades
+            .filter((trade: any) => trade.fee != null && trade.fee !== 0 && Number(trade.fee) > 0)
+            .map((trade: any) => {
+              const fee = Number(trade.fee || 0);
+              const displayInfo = getActivityDisplayInfo("commission", -fee); // Negative because it's a cost
+              
+              return {
+                id: `trade-commission-${trade.id || trade.timestamp}`,
+                type: "commission" as ActivityItem["type"],
+                timestamp: trade.timestamp,
+                title: displayInfo.title,
+                subtitle: `${trade.symbol} ${trade.side}`,
+                amount: -fee, // Negative because commission is a cost
+                amountFormatted: `-$${Math.abs(fee).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                icon: displayInfo.icon,
+                color: displayInfo.color,
+                bgColor: displayInfo.bgColor,
+                borderColor: displayInfo.borderColor,
+                details: `Trading commission for ${trade.symbol} ${trade.side} trade`,
+              };
+            });
         }
       }
 
       // Combine and sort by timestamp
-      const allActivities = [...incomeActivities, ...tradeActivities].sort(
+      const allActivities = [...incomeActivities, ...tradeActivities, ...commissionActivities].sort(
         (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
       );
 

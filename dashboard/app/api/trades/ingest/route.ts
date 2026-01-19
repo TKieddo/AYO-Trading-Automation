@@ -53,7 +53,54 @@ export async function POST(req: NextRequest) {
         executed_at: t.executed_at ?? new Date().toISOString(),
         order_id: t.order_id ?? null,
       }));
-      if (mappedTrades.length) await sb.from("trades").insert(mappedTrades as any);
+      
+      // Resolve order_id strings to UUIDs by looking up orders table
+      // trades.order_id is UUID foreign key to orders.id, but we have orders.order_id (text)
+      const orderIdMap = new Map<string, string>(); // Map order_id (text) -> orders.id (UUID)
+      
+      // Collect all unique order_id strings
+      const orderIdStrings = new Set<string>();
+      for (const trade of mappedTrades) {
+        if (trade.order_id && typeof trade.order_id === 'string') {
+          orderIdStrings.add(trade.order_id);
+        }
+      }
+      
+      // Look up orders to get their UUID ids
+      if (orderIdStrings.size > 0) {
+        const { data: ordersData } = await sb
+          .from("orders")
+          .select("id, order_id")
+          .in("order_id", Array.from(orderIdStrings));
+        
+        if (ordersData && Array.isArray(ordersData)) {
+          for (const order of ordersData) {
+            if (order.order_id && order.id) {
+              orderIdMap.set(String(order.order_id), order.id);
+            }
+          }
+        }
+      }
+      
+      // Map trades with resolved order UUIDs
+      const tradesWithOrderUuids = mappedTrades.map((trade) => {
+        const resolvedOrderId = trade.order_id && orderIdMap.has(String(trade.order_id))
+          ? orderIdMap.get(String(trade.order_id))!
+          : null;
+        
+        return {
+          symbol: trade.symbol,
+          side: trade.side,
+          size: trade.size,
+          price: trade.price,
+          fee: trade.fee,
+          pnl: trade.pnl,
+          executed_at: trade.executed_at,
+          order_id: resolvedOrderId, // Now UUID or null
+        };
+      });
+      
+      if (tradesWithOrderUuids.length) await sb.from("trades").insert(tradesWithOrderUuids as any);
 
       // Update performance_series incrementally when pnl provided
       const pnlTrades = mappedTrades.filter((t: MappedTrade) => t.pnl != null);

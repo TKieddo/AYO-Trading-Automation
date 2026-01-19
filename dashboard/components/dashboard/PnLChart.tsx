@@ -147,7 +147,7 @@ export function PnLChart({ externalRange, showRangeToggle = true }: PnLChartProp
     
     // Check if we're in week mode (groupBy=week) - show all 7 days (API filters to current week only)
     if (effectiveRange === "week" || externalRange === "7d") {
-      const weekdayLetters = ["M", "T", "W", "T", "F", "S", "S"]; // Mon-Sun
+      const weekdayLetters = ["M", "T", "W", "T", "F", "Sa", "Su"]; // Mon, Tue, Wed, Thu, Fri, Sat, Sun
       return weekdayLetters.map(label => ({
         label,
         value: dataMap.get(label) ?? 0
@@ -175,10 +175,10 @@ export function PnLChart({ externalRange, showRangeToggle = true }: PnLChartProp
     
     // If API provides labels (for grouped data), use them but ensure completeness
     if (data && data.length > 0 && data[0]?.label) {
-      // Check if it's week grouping (M, T, W, T, F, S, S)
+      // Check if it's week grouping (M, T, W, T, F, Sa, Su)
       const firstLabel = data[0].label;
-      if (["M", "T", "W", "F", "S"].includes(firstLabel)) {
-        const weekdayLetters = ["M", "T", "W", "T", "F", "S", "S"]; // Mon-Sun
+      if (["M", "T", "W", "F", "Sa", "Su"].includes(firstLabel)) {
+        const weekdayLetters = ["M", "T", "W", "T", "F", "Sa", "Su"]; // Mon, Tue, Wed, Thu, Fri, Sat, Sun
         return weekdayLetters.map(label => ({
           label,
           value: dataMap.get(label) ?? 0
@@ -223,7 +223,7 @@ export function PnLChart({ externalRange, showRangeToggle = true }: PnLChartProp
       dayMap.set(key, (dayMap.get(key) ?? 0) + v);
     }
     
-    const weekdayLetters = ["M","T","W","T","F","S","S"]; // Mon-Sun
+    const weekdayLetters = ["M","T","W","T","F","Sa","Su"]; // Mon, Tue, Wed, Thu, Fri, Sat, Sun
     const startOfWeekMon = (dt: Date) => {
       const d = new Date(dt);
       const day = d.getDay();
@@ -255,7 +255,7 @@ export function PnLChart({ externalRange, showRangeToggle = true }: PnLChartProp
     if (!data || data.length === 0) {
       // For week mode, show all 7 days with 0 values
       if (effectiveRange === "week") {
-        const weekdayLetters = ["M", "T", "W", "T", "F", "S", "S"];
+        const weekdayLetters = ["M", "T", "W", "T", "F", "Sa", "Su"]; // Mon, Tue, Wed, Thu, Fri, Sat, Sun
         return weekdayLetters.map(label => ({ label, value: 0 }));
       }
       // For month mode, show all 5 weeks with 0 values

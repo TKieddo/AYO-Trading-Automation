@@ -29,8 +29,22 @@ function getColorForSymbol(symbol: string) {
 }
 
 export function TopAssetCard({ asset, rank, totalPortfolioValue }: TopAssetCardProps) {
-  const isPositive = asset.change24h >= 0;
-  const percentage = (asset.holdingValue / totalPortfolioValue) * 100;
+  // Ensure change24h is a valid number, handle NaN, Infinity, and null/undefined
+  const validChange24h = (asset.change24h != null && !isNaN(asset.change24h) && isFinite(asset.change24h)) ? asset.change24h : 0;
+  const isPositive = validChange24h >= 0;
+  
+  // Calculate portfolio percentage - ensure totalPortfolioValue is valid
+  const validTotalValue = (totalPortfolioValue != null && !isNaN(totalPortfolioValue) && isFinite(totalPortfolioValue) && totalPortfolioValue > 0) 
+    ? totalPortfolioValue 
+    : 1; // Avoid division by zero
+  const percentage = (asset.holdingValue / validTotalValue) * 100;
+  const validPercentage = (percentage != null && !isNaN(percentage) && isFinite(percentage)) ? percentage : 0;
+  
+  // Format change24h with proper sign
+  const changeFormatted = isPositive 
+    ? `+${validChange24h.toFixed(1)}%` 
+    : `${validChange24h.toFixed(1)}%`;
+  
   let style = getColorForSymbol(asset.symbol);
   if (asset.symbol.toUpperCase() === "ETH") {
     style = { ...style, badge: "bg-black" };
@@ -53,7 +67,7 @@ export function TopAssetCard({ asset, rank, totalPortfolioValue }: TopAssetCardP
           </div>
           <div className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 ${isPositive ? 'bg-emerald-50 text-emerald-700' : 'bg-orange-50 text-orange-600'} text-[10px] font-semibold shrink-0`}>
             {isPositive ? <TrendingUp className="h-2.5 w-2.5" /> : <TrendingDown className="h-2.5 w-2.5" />}
-            {isPositive ? '+' : ''}{asset.change24h.toFixed(1)}%
+            {changeFormatted}
           </div>
         </div>
         
@@ -63,12 +77,12 @@ export function TopAssetCard({ asset, rank, totalPortfolioValue }: TopAssetCardP
           </div>
           <div className="flex items-center justify-between text-[10px] text-slate-600">
             <span className="truncate">{asset.holdingQty} {asset.symbol}</span>
-            <span className="font-medium text-slate-800 shrink-0 ml-1">{percentage.toFixed(1)}%</span>
+            <span className="font-medium text-slate-800 shrink-0 ml-1">{validPercentage.toFixed(1)}%</span>
           </div>
           <div className="h-1 rounded-full bg-slate-100 overflow-hidden">
             <div 
               className={`h-full rounded-full bg-gradient-to-r ${style.gradient}`}
-              style={{ width: `${percentage}%` }}
+              style={{ width: `${Math.min(100, Math.max(0, validPercentage))}%` }}
             />
           </div>
         </div>

@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
         updated_at: executedAt,
       });
       
-      // Save to trades table
+      // Save to trades table (will link to orders after orders are saved)
       tradesToSave.push({
         symbol: coin,
         side,
@@ -83,18 +83,59 @@ export async function POST(req: NextRequest) {
         // Store PnL: null if not realized, otherwise the actual value (can be 0)
         pnl: realizedPnl !== null ? realizedPnl : null,
         executed_at: executedAt,
-        order_id: null, // Not linking to orders table for now
+        order_id_text: orderId, // Store text order_id temporarily for lookup
       });
     }
     
+    // Step 1: Save orders first
     if (ordersToSave.length > 0) {
       await sb.from("orders").upsert(ordersToSave as any, { onConflict: "order_id" });
       console.log(`Saved ${ordersToSave.length} orders from Hyperliquid fills`);
     }
     
+    // Step 2: Resolve order_id strings to UUIDs and save trades
     if (tradesToSave.length > 0) {
+      // Build map of order_id (text) -> orders.id (UUID)
+      const orderIdMap = new Map<string, string>();
+      const orderIdStrings = tradesToSave
+        .map(t => (t as any).order_id_text)
+        .filter((id): id is string => id != null);
+      
+      if (orderIdStrings.length > 0) {
+        const { data: ordersData } = await sb
+          .from("orders")
+          .select("id, order_id")
+          .in("order_id", orderIdStrings);
+        
+        if (ordersData && Array.isArray(ordersData)) {
+          for (const order of ordersData) {
+            if (order.order_id && order.id) {
+              orderIdMap.set(String(order.order_id), order.id);
+            }
+          }
+        }
+      }
+      
+      // Map trades with resolved order UUIDs
+      const tradesWithOrderUuids = tradesToSave.map((trade: any) => {
+        const resolvedOrderId = trade.order_id_text && orderIdMap.has(String(trade.order_id_text))
+          ? orderIdMap.get(String(trade.order_id_text))!
+          : null;
+        
+        return {
+          symbol: trade.symbol,
+          side: trade.side,
+          size: trade.size,
+          price: trade.price,
+          fee: trade.fee,
+          pnl: trade.pnl,
+          executed_at: trade.executed_at,
+          order_id: resolvedOrderId, // Now UUID or null
+        };
+      });
+      
       // Insert trades, handling duplicates gracefully
-      for (const trade of tradesToSave) {
+      for (const trade of tradesWithOrderUuids) {
         try {
           const { error } = await sb.from("trades").insert(trade as any);
           if (error) {
@@ -105,7 +146,7 @@ export async function POST(req: NextRequest) {
           // Ignore any errors (duplicates, etc.)
         }
       }
-      console.log(`Saved ${tradesToSave.length} trades from Hyperliquid fills`);
+      console.log(`Saved ${tradesWithOrderUuids.length} trades from Hyperliquid fills`);
     }
 
     // Rebuild performance_series from trades

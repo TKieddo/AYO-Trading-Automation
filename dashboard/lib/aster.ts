@@ -170,22 +170,45 @@ export async function asterSignedGet(
   // Build URL
   const url = `${ASTER_BASE_URL}${endpoint}?${queryParams.toString()}`;
 
-  // Make request
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      "User-Agent": "Next.js/1.0",
-    },
-  });
+  // Make request with timeout
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout for faster failure
   
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(
-      `Aster API error: ${response.status} ${response.statusText} - ${errorText}`
-    );
-  }
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "User-Agent": "Next.js/1.0",
+      },
+      signal: controller.signal,
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Aster API error: ${response.status} ${response.statusText} - ${errorText}`
+      );
+    }
 
-  return response.json();
+    return response.json();
+  } catch (error: any) {
+    clearTimeout(timeoutId);
+    
+    // Provide more detailed error messages
+    if (error.name === 'AbortError') {
+      throw new Error(`Aster API request timeout after 5 seconds: ${endpoint}`);
+    } else if (error.message?.includes('fetch failed') || error.message?.includes('ECONNREFUSED') || error.message?.includes('ENOTFOUND')) {
+      // Network error - could be DNS, connection, SSL, etc.
+      throw new Error(`Aster API network error: Unable to connect to ${ASTER_BASE_URL}. Check your internet connection and API endpoint. Original error: ${error.message}`);
+    } else if (error.message) {
+      // Re-throw with original message if it's already descriptive
+      throw error;
+    } else {
+      throw new Error(`Aster API request failed: ${error.toString()}`);
+    }
+  }
 }
 
 /**

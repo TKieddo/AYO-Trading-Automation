@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabase } from "@/lib/supabase/client";
-import { persistPositions } from "@/lib/supabase/persist";
+import { cacheGet, cacheSet } from "@/lib/http";
 const BASE = (process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3001").replace(/\/$/, "");
 
 export async function GET() {
@@ -13,6 +12,10 @@ export async function GET() {
     const response = await fetch(`${BASE}/agent/positions`, {
       signal: controller.signal,
       cache: "no-store",
+      headers: {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+      },
     });
     
     clearTimeout(timeoutId);
@@ -22,23 +25,48 @@ export async function GET() {
       // Handle both array format and error format
       if (Array.isArray(data)) {
         // Transform to match our TypeScript Position type
-        const transformed = data.map((pos: any, index: number) => ({
-          id: pos.id || `${pos.symbol}-${index}`,
-          symbol: pos.symbol || pos.coin || "UNKNOWN",
-          side: (pos.side || (pos.size > 0 ? "long" : "short")) as "long" | "short",
-          size: Math.abs(Number(pos.size) || 0),
-          entryPrice: Number(pos.entry_price || pos.entryPrice || pos.entryPx || 0),
-          currentPrice: Number(pos.current_price || pos.currentPrice || pos.markPrice || 0),
-          liquidationPrice: pos.liquidation_price != null ? Number(pos.liquidation_price) : null,
-          unrealizedPnl: Number(pos.unrealized_pnl || pos.unrealizedPnl || pos.pnl || 0),
-          realizedPnl: Number(pos.realized_pnl || pos.realizedPnl || 0),
-          leverage: pos.leverage != null ? Number(pos.leverage) : null,
-          openedAt: pos.opened_at || pos.openedAt || new Date().toISOString(),
-          updatedAt: pos.updated_at || pos.updatedAt || new Date().toISOString(),
-        }));
+        const transformed = data.map((pos: any, index: number) => {
+          // Extract size - handle multiple field names
+          const rawSize = pos.size || pos.quantity || pos.positionAmt || pos.szi || 0;
+          const size = Math.abs(Number(rawSize) || 0);
+          
+          // Extract leverage - handle multiple field names
+          const leverage = pos.leverage != null && pos.leverage !== undefined 
+            ? Number(pos.leverage) 
+            : null;
+          
+          // Extract ROI - handle multiple field names
+          const roiPercent = (pos.roiPercent != null && pos.roiPercent !== undefined)
+            ? Number(pos.roiPercent)
+            : (pos.roi != null && pos.roi !== undefined)
+            ? Number(pos.roi)
+            : null;
+          
+          return {
+            id: pos.id || `${pos.symbol || pos.coin || "UNKNOWN"}-${index}`,
+            symbol: pos.symbol || pos.coin || "UNKNOWN",
+            side: (pos.side || (size > 0 ? "long" : "short")) as "long" | "short",
+            size: size,
+            entryPrice: Number(pos.entry_price || pos.entryPrice || pos.entryPx || 0),
+            currentPrice: Number(pos.current_price || pos.currentPrice || pos.markPrice || 0),
+            liquidationPrice: pos.liquidation_price != null ? Number(pos.liquidation_price) : null,
+            unrealizedPnl: Number(pos.unrealized_pnl || pos.unrealizedPnl || pos.pnl || 0),
+            realizedPnl: Number(pos.realized_pnl || pos.realizedPnl || 0),
+            leverage: leverage,
+            initialMargin: (pos.initial_margin != null && pos.initial_margin !== undefined) 
+              ? Number(pos.initial_margin) 
+              : ((pos.positionInitialMargin != null && pos.positionInitialMargin !== undefined)
+                ? Number(pos.positionInitialMargin)
+                : null),
+            roiPercent: roiPercent,
+            notional: pos.notional != null ? Number(pos.notional) : null,
+            openedAt: pos.opened_at || pos.openedAt || new Date().toISOString(),
+            openTime: pos.openTime != null ? Number(pos.openTime) : (pos.openedAt && typeof pos.openedAt === 'number' ? pos.openedAt : null),
+            updatedAt: pos.updated_at || pos.updatedAt || new Date().toISOString(),
+          };
+        });
         
-        persistPositions(transformed).catch(() => {});
-        cacheSet("positions", transformed, 5000);
+        cacheSet("positions", transformed, 2000); // Cache for 2s for real-time updates
         return NextResponse.json(transformed);
       } else {
         // Error response
@@ -47,56 +75,19 @@ export async function GET() {
       }
     }
   } catch (error: any) {
-    // Silently handle connection errors - Python agent may not be running
+    // Handle connection errors - Python agent may not be running
     if (error.name !== 'AbortError' && error.code !== 'ECONNREFUSED' && !error.message?.includes('fetch failed')) {
       console.error("Failed to fetch positions from Python API:", error);
     }
+    
+    // Return cached data if available, otherwise empty array
     const cached = cacheGet<any[]>("positions");
-    if (cached) return NextResponse.json(cached);
-    // Return empty array when Python agent is offline (will fallback to Supabase if available)
-  }
-  // Fallback to Supabase (no mock data)
-  try {
-    const supabase = getSupabase();
-    if (supabase) {
-      // Only fetch open positions: closed_at IS NULL and size > 0
-      const { data, error } = await supabase
-        .from("positions")
-        .select(
-          "id, symbol, side, size, entry_price, current_price, liquidation_price, unrealized_pnl, realized_pnl, leverage, opened_at, updated_at, closed_at"
-        )
-        .is("closed_at", null)
-        .gt("size", 0)
-        .order("updated_at", { ascending: false });
-
-      if (error) throw error;
-
-      const transformed = (data || [])
-        .filter((pos: any) => {
-          // Additional safety check: ensure size > 0 and closed_at is null
-          return Number(pos.size) > 0 && !pos.closed_at;
-        })
-        .map((pos: any) => ({
-          id: pos.id,
-          symbol: pos.symbol,
-          side: pos.side,
-          size: Number(pos.size),
-          entryPrice: Number(pos.entry_price),
-          currentPrice: Number(pos.current_price),
-          liquidationPrice: pos.liquidation_price ? Number(pos.liquidation_price) : null,
-          unrealizedPnl: pos.unrealized_pnl ? Number(pos.unrealized_pnl) : 0,
-          realizedPnl: pos.realized_pnl ? Number(pos.realized_pnl) : 0,
-          leverage: pos.leverage ?? null,
-          openedAt: pos.opened_at,
-          updatedAt: pos.updated_at,
-        }));
-
-      return NextResponse.json(transformed);
+    if (cached) {
+      return NextResponse.json(cached);
     }
-  } catch (e) {
-    console.error("Failed to fetch positions from Supabase:", e);
+    
+    // Return empty array when Python agent is offline (no database fallback)
+    return NextResponse.json([], { status: 503 });
   }
-
-  return NextResponse.json([], { status: 500 });
 }
 

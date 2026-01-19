@@ -28,7 +28,9 @@ export function TradesTable({ rows }: { rows: HistoryTrade[] }) {
               <tbody>
                 {rows.length > 0 ? (
                   rows.map(t => {
-                  const isWin = t.pnl >= 0;
+                  const pnl = t.pnl != null ? t.pnl : 0;
+                  const isWin = pnl >= 0;
+                  const hasPnl = t.pnl != null;
                   return (
                     <tr key={t.id} className="border-b border-slate-200 hover:bg-slate-50">
                       <td className="py-3 px-4 text-slate-600">{new Date(t.timestamp).toLocaleString()}</td>
@@ -37,7 +39,9 @@ export function TradesTable({ rows }: { rows: HistoryTrade[] }) {
                       <td className="py-3 px-4 text-right text-slate-800">{formatNumber(t.size, 6)}</td>
                       <td className="py-3 px-4 text-right text-slate-600">{formatCurrency(t.price)}</td>
                       <td className="py-3 px-4 text-right text-slate-600">{formatCurrency(t.fee)}</td>
-                      <td className={`py-3 px-4 text-right font-semibold ${isWin ? "text-emerald-600" : "text-red-600"}`}>{formatCurrency(t.pnl)}</td>
+                      <td className={`py-3 px-4 text-right font-semibold ${hasPnl ? (isWin ? "text-emerald-600" : "text-red-600") : "text-slate-400"}`}>
+                        {hasPnl ? formatCurrency(pnl) : "-"}
+                      </td>
                     </tr>
                   );
                   })

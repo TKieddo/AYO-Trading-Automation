@@ -20,6 +20,86 @@ export async function GET() {
     if (response.ok) {
       const statusData = await response.json();
       
+      // Try to get detailed balances from /balances endpoint (includes all assets)
+      try {
+        const balancesResponse = await fetch(`${PYTHON_API_URL}/balances`, {
+          cache: "no-store",
+        });
+        
+        if (balancesResponse.ok) {
+          const balancesData = await balancesResponse.json();
+          
+          // Log for debugging
+          console.log("Balances endpoint response:", {
+            hasBalances: !!balancesData.balances,
+            balancesCount: balancesData.balances?.length || 0,
+            balances: balancesData.balances?.slice(0, 3), // First 3 for debugging
+            accountValue: balancesData.accountValue,
+            exchange: balancesData.exchange || statusData.exchange,
+          });
+          
+          // Return balances from Python backend (includes all assets: USDT, USDC, BTC, etc.)
+          // Ensure balances is always an array
+          const balancesArray = Array.isArray(balancesData.balances) 
+            ? balancesData.balances 
+            : [];
+          
+          const exchange = balancesData.exchange || statusData.exchange || "aster";
+          const network = balancesData.network || statusData.network || statusData.network_label || "mainnet";
+          const accountValue = balancesData.accountValue || statusData.account_value || statusData.balance || 0;
+          
+          // Save balance snapshot to database (non-blocking, async)
+          const supabase = getServerSupabase();
+          if (supabase && accountValue > 0) {
+            const availableBalance = balancesArray.reduce((sum: number, b: any) => sum + Number(b.availableBalance || 0), 0);
+            const totalPositionsValue = balancesArray.reduce((sum: number, b: any) => sum + Number(b.positionValue || b.crossWalletBalance || 0), 0);
+            const totalUnrealizedPnl = balancesArray.reduce((sum: number, b: any) => sum + Number(b.crossUnPnl || 0), 0);
+            
+            // Round timestamp to nearest minute to prevent too many entries
+            const now = new Date();
+            const roundedTimestamp = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes(), 0);
+            
+            // Save balance snapshot (fire and forget, don't block response)
+            (async () => {
+              try {
+                await supabase
+                  .from("wallet_balance_history")
+                  .upsert({
+                    account_value: accountValue.toString(),
+                    available_balance: availableBalance.toString(),
+                    total_positions_value: totalPositionsValue.toString(),
+                    unrealized_pnl: totalUnrealizedPnl.toString(),
+                    network: exchange, // Use exchange name as network identifier (e.g., "binance", "aster")
+                    timestamp: roundedTimestamp.toISOString(),
+                  } as any, {
+                    onConflict: "timestamp,network",
+                  });
+              } catch (err: any) {
+                // Log error but don't block the response
+                console.error("Error saving balance snapshot:", err);
+              }
+            })();
+          }
+          
+          return NextResponse.json({
+            balances: balancesArray,
+            accountValue,
+            balance: balancesData.balance || statusData.balance || 0,
+            exchange,
+            network,
+            source: "python_backend"
+          });
+        } else {
+          // Log error if balances endpoint failed
+          const errorText = await balancesResponse.text().catch(() => "Unknown error");
+          console.warn(`Balances endpoint returned ${balancesResponse.status}:`, errorText);
+          // Don't return here - fall through to try other methods
+        }
+      } catch (e: any) {
+        // Log error but fall through to try positions endpoint
+        console.warn("Error fetching from /balances endpoint:", e.message || e);
+      }
+      
       // Also try to get positions for more detailed balance info
       try {
         const positionsResponse = await fetch(`${PYTHON_API_URL}/positions`, {
@@ -29,8 +109,9 @@ export async function GET() {
         if (positionsResponse.ok) {
           const positions = await positionsResponse.json();
           
-          // Return balance info from Python backend
+          // Return balance info from Python backend (but without balances array)
           return NextResponse.json({
+            balances: [], // No balances from positions endpoint
             balance: statusData.balance || 0,
             accountValue: statusData.account_value || statusData.balance || 0,
             totalUnrealizedPnl: positions.reduce((sum: number, p: any) => 
@@ -46,8 +127,9 @@ export async function GET() {
         // Fall through to direct API call
       }
       
-      // Return basic balance from status
+      // Return basic balance from status (no balances array available)
       return NextResponse.json({
+        balances: [], // No balances available from status endpoint
         balance: statusData.balance || 0,
         accountValue: statusData.account_value || statusData.balance || 0,
         positions: statusData.positions_count || 0,
@@ -74,14 +156,18 @@ export async function GET() {
     }
 
     // Fetch balances, account info, and positions in parallel (matching Python implementation)
+    // Wrap all calls with timeout and better error handling
     const [balances, account, positions] = await Promise.all([
-      asterSignedGet("/fapi/v3/balance", {}, env),
+      asterSignedGet("/fapi/v3/balance", {}, env).catch((err) => {
+        console.warn("Failed to fetch Aster balance:", err.message);
+        return [];
+      }),
       asterSignedGet("/fapi/v3/account", {}, env).catch((err) => {
-        console.error("Failed to fetch Aster account:", err);
+        console.warn("Failed to fetch Aster account:", err.message);
         return null;
       }),
       asterSignedGet("/fapi/v3/positionRisk", {}, env).catch((err) => {
-        console.error("Failed to fetch Aster positions:", err);
+        console.warn("Failed to fetch Aster positions:", err.message);
         return [];
       }),
     ]);
@@ -198,7 +284,7 @@ export async function GET() {
               available_balance: availableBalance.toString(),
               total_positions_value: totalPositionsValue.toString(),
               unrealized_pnl: totalUnrealizedPnl.toString(),
-              network: "aster", // Use "aster" as network identifier
+              network: "aster", // Use "aster" as network identifier (for direct API calls, always Aster)
               timestamp: roundedTimestamp.toISOString(),
             } as any, {
               onConflict: "timestamp,network",

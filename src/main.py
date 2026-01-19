@@ -16,7 +16,11 @@ import math  # For Sharpe
 from dotenv import load_dotenv
 import os
 import json
-from aiohttp import web
+from aiohttp import web, ClientSession, ClientTimeout
+try:
+    import httpx
+except ImportError:
+    httpx = None  # httpx may not be installed, handle gracefully
 from src.utils.formatting import format_number as fmt, format_size as fmt_sz
 from src.utils.prompt_utils import json_default, round_or_none, round_series
 from src.utils.trading_settings import get_trading_settings, get_max_leverage_for_asset, calculate_tp_sl_prices, calculate_allocation_usd
@@ -74,15 +78,21 @@ def clear_terminal():
 
 
 def get_interval_seconds(interval_str):
-    """Convert interval strings like '5m' or '1h' to seconds."""
+    """Convert interval strings like '5m', '1h', '1hr', or '1d' to seconds."""
+    interval_str = interval_str.strip().lower()  # Normalize input
+    
     if interval_str.endswith('m'):
         return int(interval_str[:-1]) * 60
-    elif interval_str.endswith('h'):
-        return int(interval_str[:-1]) * 3600
+    elif interval_str.endswith('h') or interval_str.endswith('hr'):
+        # Handle both 'h' and 'hr' formats (e.g., '1h' or '1hr')
+        if interval_str.endswith('hr'):
+            return int(interval_str[:-2]) * 3600
+        else:
+            return int(interval_str[:-1]) * 3600
     elif interval_str.endswith('d'):
         return int(interval_str[:-1]) * 86400
     else:
-        raise ValueError(f"Unsupported interval: {interval_str}")
+        raise ValueError(f"Unsupported interval: {interval_str}. Supported formats: '5m', '1h', '1hr', '1d', etc.")
 
 def main():
     """Parse CLI args, bootstrap dependencies, and launch the trading loop."""
@@ -607,11 +617,23 @@ def main():
                 except Exception:
                     return True
 
-            # Log which strategy is being used for this cycle (manual mode only)
+            # Track current strategy name for change detection (both AUTO and MANUAL)
+            current_strategy_name = agent.get_name()
+            if not hasattr(run_loop, '_last_strategy_name'):
+                run_loop._last_strategy_name = None
+            
+            # Log which strategy is being used for this cycle
             if strategy_mode == "MANUAL":
                 if not hasattr(run_loop, '_last_strategy_log') or run_loop._last_strategy_log != invocation_count:
-                    logging.info(f"📊 Using strategy: {agent.get_name()}")
+                    logging.info(f"📊 Using strategy: {current_strategy_name}")
                     run_loop._last_strategy_log = invocation_count
+            elif strategy_mode == "AUTO":
+                # For auto mode, log when strategy changes
+                if run_loop._last_strategy_name and run_loop._last_strategy_name != current_strategy_name:
+                    logging.warning(f"🔄 Strategy changed: {run_loop._last_strategy_name} → {current_strategy_name}")
+            
+            # Update last strategy name
+            run_loop._last_strategy_name = current_strategy_name
 
             try:
                 outputs = agent.decide_trade(args.assets, context)
@@ -647,6 +669,69 @@ def main():
             if reasoning_text:
                 add_event(f"LLM reasoning summary: {reasoning_text}")
 
+            # Check if strategy changed (for auto mode) and adjust existing positions accordingly
+            if strategy_mode == "AUTO" and hasattr(run_loop, '_last_strategy_name') and run_loop._last_strategy_name:
+                previous_strategy_name = run_loop._last_strategy_name
+                if previous_strategy_name != current_strategy_name:
+                    add_event(f"🔄 Strategy changed: {previous_strategy_name} → {current_strategy_name}")
+                    # Adjust TP/SL for existing positions based on new strategy
+                    for pos in positions:
+                        asset = pos.get('symbol') or pos.get('coin')
+                        if not asset:
+                            continue
+                        position_size = abs(float(pos.get('quantity', 0) or pos.get('szi', 0)))
+                        if position_size <= 0:
+                            continue
+                        
+                        # Find entry price and position info
+                        entry_price = pos.get('entry_price') or pos.get('entryPx') or pos.get('entryPrice')
+                        if not entry_price:
+                            continue
+                        
+                        current_price = asset_prices.get(asset, 0)
+                        if not current_price:
+                            try:
+                                current_price = await hyperliquid.get_current_price(asset)
+                                asset_prices[asset] = current_price
+                            except Exception:
+                                continue
+                        
+                        raw_size = float(pos.get('szi', 0) or pos.get('quantity', 0))
+                        is_long = raw_size > 0
+                        
+                        # Determine if switching TO scalping (need 5% TP) or TO trend (indicator-based)
+                        is_scalping_now = "scalping" in current_strategy_name.lower()
+                        was_scalping_before = "scalping" in previous_strategy_name.lower()
+                        
+                        # If switching TO scalping: Adjust TP to 5% if position is profitable
+                        if is_scalping_now and not was_scalping_before:
+                            pnl_pct = ((current_price - entry_price) / entry_price * 100) if is_long else ((entry_price - current_price) / entry_price * 100)
+                            if pnl_pct > 0:  # Position is profitable
+                                # Calculate new 5% TP
+                                if is_long:
+                                    new_tp = entry_price * 1.05
+                                else:
+                                    new_tp = entry_price * 0.95
+                                
+                                add_event(f"📊 Strategy switch to SCALPING: Adjusting TP for {asset} to 5% (${new_tp:.4f})")
+                                try:
+                                    await hyperliquid.cancel_all_orders(asset)
+                                    await hyperliquid.place_take_profit(asset, is_long, position_size, new_tp)
+                                    add_event(f"✅ Updated TP for {asset} to 5% (scalping strategy)")
+                                except Exception as e:
+                                    add_event(f"⚠️  Could not update TP for {asset}: {e}")
+                        
+                        # If switching TO trend: Let new strategy manage with indicator-based exits
+                        elif not is_scalping_now and was_scalping_before:
+                            add_event(f"📊 Strategy switch to TREND: {asset} will be managed with indicator-based exits")
+                            # New strategy will handle exits based on indicators
+                            # Cancel existing TP orders and let trend strategy set new ones based on indicators
+                            try:
+                                await hyperliquid.cancel_all_orders(asset)
+                                add_event(f"🧹 Cancelled old TP/SL orders for {asset} - trend strategy will set new ones based on indicators")
+                            except Exception as e:
+                                add_event(f"⚠️  Could not cancel orders for {asset}: {e}")
+
             # PROTECT GAINS: Check TP/SL for ALL open positions and close immediately if reached
             # This protects against missed TP/SL orders and ensures gains are locked in
             for pos in positions:
@@ -674,6 +759,17 @@ def main():
                 tp_price = None
                 sl_price = None
                 entry_price = pos.get('entry_price') or pos.get('entryPx') or pos.get('entryPrice')
+                opened_at_str = None
+                peak_profit_pct = None  # Track peak profit for drawdown protection
+                
+                # Find active trade record for additional tracking
+                active_trade_record = None
+                for tr in active_trades:
+                    if tr.get('asset') == asset:
+                        active_trade_record = tr
+                        opened_at_str = tr.get('opened_at')
+                        peak_profit_pct = tr.get('peak_profit_pct')  # Get stored peak profit
+                        break
                 
                 try:
                     with open(diary_path, "r") as f:
@@ -688,6 +784,8 @@ def main():
                                     sl_price = entry.get('sl_price')
                                 if not entry_price:
                                     entry_price = entry.get('entry_price')
+                                if not opened_at_str:
+                                    opened_at_str = entry.get('timestamp') or entry.get('opened_at')
                                 if tp_price or sl_price:
                                     is_long = entry.get('action') == 'buy'
                                     break
@@ -707,28 +805,218 @@ def main():
                 if notional_value > 0:
                     pnl_percent = (unrealized_pnl / notional_value) * 100
                 
+                # Update peak profit tracking for drawdown protection
+                if peak_profit_pct is None or pnl_percent > peak_profit_pct:
+                    peak_profit_pct = pnl_percent
+                    # Store updated peak in active_trades
+                    if active_trade_record:
+                        active_trade_record['peak_profit_pct'] = peak_profit_pct
+                    else:
+                        # Create or update active trade record
+                        for tr in active_trades:
+                            if tr.get('asset') == asset:
+                                tr['peak_profit_pct'] = peak_profit_pct
+                                break
+                        else:
+                            # No record found, create one
+                            active_trades.append({
+                                'asset': asset,
+                                'is_long': is_long,
+                                'entry_price': entry_price,
+                                'opened_at': opened_at_str or datetime.now(timezone.utc).isoformat(),
+                                'peak_profit_pct': peak_profit_pct
+                            })
+                
+                # ========================================================================
+                # ADVANCED POSITION MANAGEMENT: Trailing Stop, Max Hold Time, Drawdown Protection
+                # ========================================================================
+                
+                # 1. MAXIMUM HOLD TIME CHECK
+                max_hold_hours = CONFIG.get('max_position_hold_hours', 24.0)
+                if opened_at_str and max_hold_hours > 0:
+                    try:
+                        if 'T' in opened_at_str:
+                            opened_at = datetime.fromisoformat(opened_at_str.replace('Z', '+00:00'))
+                        else:
+                            opened_at = datetime.fromisoformat(opened_at_str)
+                        hours_open = (datetime.now(timezone.utc) - opened_at).total_seconds() / 3600
+                        
+                        if hours_open >= max_hold_hours:
+                            add_event(f"⏰ Maximum hold time reached for {asset}: {hours_open:.1f} hours (max: {max_hold_hours}h). Closing position.")
+                            should_take_profit = True
+                            profit_reason = f"Max hold time ({hours_open:.1f}h)"
+                            # Skip other checks and close immediately
+                            try:
+                                close_action = "sell" if is_long else "buy"
+                                if is_long:
+                                    close_order = await hyperliquid.place_sell_order(asset, position_size)
+                                else:
+                                    close_order = await hyperliquid.place_buy_order(asset, position_size)
+                                add_event(f"✅ Closed {asset} position (max hold time) via {close_action} order")
+                                
+                                # Remove from active trades
+                                for tr in active_trades[:]:
+                                    if tr.get('asset') == asset:
+                                        active_trades.remove(tr)
+                                
+                                # Log to diary
+                                with open(diary_path, "a") as f:
+                                    f.write(json.dumps({
+                                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                                        "asset": asset,
+                                        "action": "close_max_hold_time",
+                                        "entry_price": entry_price,
+                                        "exit_price": current_price,
+                                        "amount": position_size,
+                                        "reason": f"Maximum hold time reached ({hours_open:.1f}h)",
+                                        "pnl": unrealized_pnl
+                                    }) + "\n")
+                            except Exception as e:
+                                add_event(f"❌ Failed to close {asset} position (max hold time): {e}")
+                            continue  # Skip to next position
+                    except Exception as e:
+                        logging.warning(f"Could not parse opened_at for {asset} max hold check: {e}")
+                
+                # 2. DRAWDOWN PROTECTION: Close if profit drops significantly from peak
+                enable_drawdown = CONFIG.get('enable_drawdown_protection', True)
+                max_drawdown_pct = CONFIG.get('max_drawdown_from_peak_pct', 5.0)
+                drawdown_should_close = False
+                drawdown_reason = ""
+                if enable_drawdown and peak_profit_pct is not None and peak_profit_pct > 0:
+                    drawdown_from_peak = peak_profit_pct - pnl_percent
+                    if drawdown_from_peak >= max_drawdown_pct:
+                        add_event(f"📉 Drawdown protection triggered for {asset}: Peak was {peak_profit_pct:.1f}%, now {pnl_percent:.1f}% (drawdown: {drawdown_from_peak:.1f}%). Closing to protect gains.")
+                        drawdown_should_close = True
+                        drawdown_reason = f"Drawdown protection ({drawdown_from_peak:.1f}% from peak)"
+                        # Will close below
+                
+                # 2b. LOSS PROTECTION: Close if position is down significantly (backup if AI doesn't close)
+                loss_protection_pct = CONFIG.get('loss_protection_pct', 5.0)  # Close if down 5%+
+                if pnl_percent <= -loss_protection_pct:
+                    # Check how long it's been losing
+                    if opened_at_str:
+                        try:
+                            if 'T' in opened_at_str:
+                                opened_at = datetime.fromisoformat(opened_at_str.replace('Z', '+00:00'))
+                            else:
+                                opened_at = datetime.fromisoformat(opened_at_str)
+                            hours_open = (datetime.now(timezone.utc) - opened_at).total_seconds() / 3600
+                            
+                            # Only auto-close if it's been losing for a while (at least 1 hour) to give it time to recover
+                            if hours_open >= 1.0:
+                                add_event(f"⚠️  Loss protection triggered for {asset}: Down {abs(pnl_percent):.1f}% after {hours_open:.1f} hours. System closing as backup (AI should have closed earlier).")
+                                drawdown_should_close = True
+                                drawdown_reason = f"Loss protection (down {abs(pnl_percent):.1f}% after {hours_open:.1f}h)"
+                        except Exception as e:
+                            logging.warning(f"Could not parse opened_at for {asset} loss protection: {e}")
+                
+                # 3. TRAILING STOP LOSS: Move SL up as profit increases
+                enable_trailing = CONFIG.get('enable_trailing_stop', True)
+                trailing_activation_pct = CONFIG.get('trailing_stop_activation_pct', 5.0)
+                trailing_distance_pct = CONFIG.get('trailing_stop_distance_pct', 3.0)
+                
+                if enable_trailing and pnl_percent >= trailing_activation_pct:
+                    # Calculate new trailing stop price
+                    if is_long:
+                        new_sl_price = current_price * (1 - trailing_distance_pct / 100)
+                        # Only update if new SL is higher than current SL (or no SL set)
+                        if not sl_price or new_sl_price > sl_price:
+                            old_sl_price = sl_price
+                            sl_price = new_sl_price
+                            add_event(f"📈 Trailing stop updated for {asset}: SL moved to ${sl_price:.4f} (profit: {pnl_percent:.1f}%)")
+                            
+                            # Update SL order on exchange
+                            try:
+                                # Cancel old SL order if exists
+                                if active_trade_record and active_trade_record.get('sl_oid'):
+                                    try:
+                                        await hyperliquid.cancel_order(asset, active_trade_record.get('sl_oid'))
+                                    except Exception:
+                                        pass
+                                
+                                # Place new trailing SL order
+                                sl_order = await hyperliquid.place_stop_loss(asset, is_long, position_size, sl_price)
+                                sl_oids = hyperliquid.extract_oids(sl_order) if hasattr(hyperliquid, 'extract_oids') else []
+                                sl_oid = sl_oids[0] if sl_oids else None
+                                
+                                # Update active trade record
+                                if active_trade_record:
+                                    active_trade_record['sl_oid'] = sl_oid
+                                    active_trade_record['sl_price'] = sl_price
+                                
+                                add_event(f"✅ Trailing SL order placed for {asset} at ${sl_price:.4f}")
+                            except Exception as e:
+                                add_event(f"⚠️  Could not update trailing SL for {asset}: {e}")
+                    else:  # short position
+                        new_sl_price = current_price * (1 + trailing_distance_pct / 100)
+                        # Only update if new SL is lower than current SL (or no SL set)
+                        if not sl_price or new_sl_price < sl_price:
+                            old_sl_price = sl_price
+                            sl_price = new_sl_price
+                            add_event(f"📈 Trailing stop updated for {asset}: SL moved to ${sl_price:.4f} (profit: {pnl_percent:.1f}%)")
+                            
+                            # Update SL order on exchange
+                            try:
+                                # Cancel old SL order if exists
+                                if active_trade_record and active_trade_record.get('sl_oid'):
+                                    try:
+                                        await hyperliquid.cancel_order(asset, active_trade_record.get('sl_oid'))
+                                    except Exception:
+                                        pass
+                                
+                                # Place new trailing SL order
+                                sl_order = await hyperliquid.place_stop_loss(asset, is_long, position_size, sl_price)
+                                sl_oids = hyperliquid.extract_oids(sl_order) if hasattr(hyperliquid, 'extract_oids') else []
+                                sl_oid = sl_oids[0] if sl_oids else None
+                                
+                                # Update active trade record
+                                if active_trade_record:
+                                    active_trade_record['sl_oid'] = sl_oid
+                                    active_trade_record['sl_price'] = sl_price
+                                
+                                add_event(f"✅ Trailing SL order placed for {asset} at ${sl_price:.4f}")
+                            except Exception as e:
+                                add_event(f"⚠️  Could not update trailing SL for {asset}: {e}")
+                
                 # SMART PROFIT-TAKING: Adjust TP dynamically based on current profit
                 # Consider fees (~0.04% per entry/exit = ~0.08% round trip)
                 # Take profits at reasonable levels, don't be too greedy
-                should_take_profit = False
-                profit_reason = ""
+                should_take_profit = drawdown_should_close  # Start with drawdown protection flag
+                profit_reason = drawdown_reason if drawdown_should_close else ""
                 
-                if pnl_percent >= 15.0:  # Up 15%+ - take profits immediately
+                # Check if this is a scalping trade (TP around 5%)
+                is_scalping_trade = False
+                if tp_price and entry_price:
+                    if is_long:
+                        tp_percent_from_entry = ((tp_price - entry_price) / entry_price) * 100
+                    else:
+                        tp_percent_from_entry = ((entry_price - tp_price) / entry_price) * 100
+                    # Scalping trades typically have TP around 5% (4-6% range)
+                    is_scalping_trade = 4.0 <= tp_percent_from_entry <= 6.0
+                
+                # SCALPING STRATEGY: Close immediately at 5% profit
+                if is_scalping_trade and pnl_percent >= 5.0:
                     should_take_profit = True
-                    profit_reason = "Strong profit (15%+) - locking in gains"
-                elif pnl_percent >= 10.0:  # Up 10-15% - take profits if TP too high
-                    # Check if TP is more than 20% away - if so, take profit now
-                    if tp_price:
-                        tp_percent = 0.0
-                        if is_long:
-                            tp_percent = ((tp_price - entry_price) / entry_price) * 100
-                        else:
-                            tp_percent = ((entry_price - tp_price) / entry_price) * 100
-                        
-                        if tp_percent > 20.0:  # TP is more than 20% away
-                            should_take_profit = True
-                            profit_reason = f"Profit at {pnl_percent:.1f}% - TP too high ({tp_percent:.1f}%), taking profit"
-                # Trailing TP adjustments disabled (reverted to static TP/SL behavior)
+                    profit_reason = f"Scalping target reached ({pnl_percent:.1f}%) - closing immediately"
+                    add_event(f"🎯 Scalping trade {asset}: Reached 5% target ({pnl_percent:.1f}%), closing immediately")
+                
+                # TREND STRATEGY: Use higher thresholds, let indicators guide exits
+                elif not is_scalping_trade:
+                    if pnl_percent >= 15.0:  # Up 15%+ - take profits immediately
+                        should_take_profit = True
+                        profit_reason = "Strong profit (15%+) - locking in gains"
+                    elif pnl_percent >= 10.0:  # Up 10-15% - take profits if TP too high
+                        # Check if TP is more than 20% away - if so, take profit now
+                        if tp_price:
+                            tp_percent = 0.0
+                            if is_long:
+                                tp_percent = ((tp_price - entry_price) / entry_price) * 100
+                            else:
+                                tp_percent = ((entry_price - tp_price) / entry_price) * 100
+                            
+                            if tp_percent > 20.0:  # TP is more than 20% away
+                                should_take_profit = True
+                                profit_reason = f"Profit at {pnl_percent:.1f}% - TP too high ({tp_percent:.1f}%), taking profit"
                 
                 # Check TP/SL conditions
                 tp_hit = False
@@ -1309,14 +1597,17 @@ def main():
                 szi = pos.get('szi') or pos.get('positionAmt') or pos.get('quantity', 0)
                 entry_px = pos.get('entryPx') or pos.get('entryPrice') or pos.get('entry_price', 0)
                 
-                # Get current price - try from position data first, then fetch if missing
-                current_px = pos.get('current_price') or pos.get('markPrice') or pos.get('currentPrice')
-                if not current_px and coin:
+                # Always fetch fresh current price for real-time updates
+                current_px = None
+                if coin:
                     try:
                         current_px = await hyperliquid.get_current_price(coin)
                     except Exception as e:
                         logging.warning(f"Could not fetch current price for {coin}: {e}")
-                        current_px = entry_px  # Fallback to entry price if fetch fails
+                        # Fallback to markPrice from position data if fetch fails
+                        current_px = pos.get('current_price') or pos.get('markPrice') or pos.get('markPrice') or pos.get('currentPrice')
+                        if not current_px:
+                            current_px = entry_px  # Last resort: use entry price
                 
                 pnl = pos.get('pnl') or pos.get('unRealizedProfit') or pos.get('unrealized_pnl', 0)
                 
@@ -1325,29 +1616,82 @@ def main():
                 side = "long" if size > 0 else "short" if size < 0 else None
                 
                 if side and abs(size) > 0:  # Only include non-zero positions
-                    # Get leverage from active_trades or trading settings
-                    leverage = None
-                    opened_at = None
-                    for tr in active_trades:
-                        if tr.get('asset') == coin:
-                            leverage = tr.get('leverage')
-                            opened_at = tr.get('opened_at')
-                            break
-                    
-                    # If not found in active_trades, fetch from database settings (ALWAYS use database)
-                    if leverage is None:
+                    # ONLY use actual leverage from Binance position data (no fallback to settings/config)
+                    leverage = pos.get('leverage')
+                    if leverage:
                         try:
-                            settings = await get_trading_settings()
-                            leverage = settings["leverage"]
-                            logging.debug(f"Fetched leverage {leverage}x from database for position {coin}")
-                        except Exception as e:
-                            logging.error(f"Failed to fetch leverage from database for {coin}: {e}. This should not happen!")
-                            # Only use env as absolute last resort - this should rarely happen
-                            leverage = CONFIG.get("default_leverage", 10)
-                            logging.warning(f"⚠️  Using .env leverage {leverage}x as fallback. Database settings should be used!")
+                            leverage = float(leverage)
+                            logging.debug(f"Using actual leverage {leverage}x from Binance for position {coin}")
+                        except (ValueError, TypeError):
+                            leverage = None
+                            logging.warning(f"⚠️  Could not parse leverage from Binance for {coin}, setting to None")
+                    else:
+                        leverage = None
+                        logging.warning(f"⚠️  No leverage found in Binance position data for {coin}, setting to None")
                     
                     # Get liquidation price if available
                     liquidation_price = pos.get('liquidationPrice') or pos.get('liquidation_price') or pos.get('liqPx') or pos.get('liquidationPx')
+                    
+                    # Get actual initial margin from position data (more accurate than calculating)
+                    # Binance API returns this as 'positionInitialMargin' or 'initialMargin'
+                    initial_margin = pos.get('positionInitialMargin') or pos.get('initialMargin') or pos.get('position_initial_margin') or pos.get('initial_margin')
+                    if initial_margin is None or initial_margin == 0:
+                        # Fallback: calculate from notional and leverage
+                        if entry_px and size and leverage:
+                            notional = abs(size) * float(entry_px)
+                            initial_margin = notional / leverage if leverage > 0 else None
+                        else:
+                            initial_margin = None
+                    else:
+                        initial_margin = float(initial_margin)
+                    
+                    # Get ROI percentage directly from Binance API
+                    roi_percent = pos.get('roiPercent') or pos.get('roi')
+                    if roi_percent is not None:
+                        try:
+                            roi_percent = float(roi_percent)
+                        except (ValueError, TypeError):
+                            roi_percent = None
+                    
+                    # Get notional value directly from Binance API
+                    notional = pos.get('notional')
+                    if notional is not None:
+                        try:
+                            notional = float(notional)
+                        except (ValueError, TypeError):
+                            notional = None
+                    
+                    # Get openTime from Binance API (timestamp in ms) - prioritize this over active_trades
+                    open_time = pos.get('openTime') or pos.get('openedAt')
+                    if open_time:
+                        if isinstance(open_time, (int, float)):
+                            # Already a timestamp in ms
+                            open_time = int(open_time)
+                        elif isinstance(open_time, str):
+                            # Try to parse ISO string to timestamp
+                            try:
+                                dt = datetime.fromisoformat(open_time.replace('Z', '+00:00'))
+                                open_time = int(dt.timestamp() * 1000)
+                            except:
+                                open_time = None
+                        else:
+                            open_time = None
+                    else:
+                        open_time = None
+                    
+                    # Get opened_at from active_trades as fallback (for ISO string format)
+                    opened_at = None
+                    if not open_time:
+                        for tr in active_trades:
+                            if tr.get('asset') == coin:
+                                opened_at = tr.get('opened_at')
+                                break
+                    
+                    # Use openTime to create ISO string for opened_at, or fallback to active_trades
+                    if open_time:
+                        opened_at = datetime.fromtimestamp(open_time / 1000, tz=timezone.utc).isoformat()
+                    elif not opened_at:
+                        opened_at = datetime.now(timezone.utc).isoformat()
                     
                     positions_list.append({
                         'symbol': coin,
@@ -1358,8 +1702,12 @@ def main():
                         'liquidation_price': float(liquidation_price) if liquidation_price else None,
                         'unrealized_pnl': float(pnl) if pnl else 0.0,
                         'realized_pnl': 0.0,  # Not available from exchange directly
-                        'leverage': leverage,
-                        'opened_at': opened_at or datetime.now(timezone.utc).isoformat(),
+                        'leverage': leverage,  # ONLY from Binance exchange, never from settings
+                        'initial_margin': float(initial_margin) if initial_margin else None,  # Actual margin used
+                        'roiPercent': roi_percent,  # ROI percentage from Binance API
+                        'notional': notional,  # Notional value from Binance API
+                        'opened_at': opened_at,  # ISO string format
+                        'openTime': open_time,  # Timestamp in ms from Binance API
                         'updated_at': datetime.now(timezone.utc).isoformat()
                     })
                     logging.debug(f"Added position: {coin} {side} {abs(size)}")
@@ -1372,10 +1720,100 @@ def main():
             logging.error(traceback.format_exc())
             return web.json_response({"error": str(e)}, status=500)
 
+    async def handle_balances(request):
+        """Return all asset balances (USDT, USDC, BTC, etc.) from the exchange."""
+        try:
+            logging.info("Fetching balances from exchange...")
+            state = await hyperliquid.get_user_state()
+            
+            # Get asset balances if available (Binance returns this, Aster might not)
+            asset_balances = state.get('asset_balances', [])
+            
+            logging.info(f"Retrieved {len(asset_balances)} asset balances from get_user_state")
+            if asset_balances:
+                logging.info(f"Asset balance keys: {[b.get('asset', 'N/A') for b in asset_balances[:5]]}")
+            
+            # If no asset_balances in state, try to construct from positions and account info
+            if not asset_balances and exchange_name == "binance":
+                # For Binance, we should have asset_balances from get_user_state
+                # But if not, we can still return what we have
+                logging.warning("No asset_balances found in state for Binance exchange")
+                asset_balances = []
+            
+            # Format balances for frontend compatibility
+            formatted_balances = []
+            for balance in asset_balances:
+                asset = balance.get('asset', '')
+                if not asset:
+                    continue
+                    
+                formatted_balance = {
+                    'asset': asset,
+                    'walletBalance': float(balance.get('walletBalance', 0) or 0),
+                    'availableBalance': float(balance.get('availableBalance', 0) or 0),
+                    'crossWalletBalance': float(balance.get('crossWalletBalance', 0) or 0),
+                    'crossUnPnl': float(balance.get('crossUnPnl', 0) or 0),
+                    'positionValue': float(balance.get('positionValue', balance.get('crossWalletBalance', 0)) or 0),
+                }
+                formatted_balances.append(formatted_balance)
+                logging.debug(f"Formatted balance for {asset}: wallet={formatted_balance['walletBalance']}, cross={formatted_balance['crossWalletBalance']}")
+            
+            logging.info(f"Returning {len(formatted_balances)} formatted balances: {[b['asset'] for b in formatted_balances]}")
+            
+            # Calculate account value
+            account_value = state.get('total_value', state.get('balance', 0))
+            
+            response_data = {
+                "balances": formatted_balances,
+                "accountValue": account_value,
+                "balance": state.get('balance', 0),
+                "exchange": exchange_name,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            
+            logging.info(f"Balances response: {len(formatted_balances)} assets, accountValue={account_value}")
+            return web.json_response(response_data)
+        except Exception as e:
+            logging.error(f"Error getting balances: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
+            return web.json_response({
+                "error": str(e),
+                "balances": [],
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }, status=500)
+
     async def handle_status(request):
         """Return API status and basic account info."""
         try:
-            state = await hyperliquid.get_user_state()
+            # Add timeout to prevent blocking
+            try:
+                state = await asyncio.wait_for(hyperliquid.get_user_state(), timeout=3.0)
+            except asyncio.TimeoutError:
+                # Return cached/fallback status if API is slow
+                if exchange_name == "aster":
+                    network_label = "Aster DEX"
+                    network = "mainnet"
+                elif exchange_name == "binance":
+                    testnet = CONFIG.get("binance_testnet", False)
+                    network_label = f"Binance Futures ({'testnet' if testnet else 'mainnet'})"
+                    network = "testnet" if testnet else "mainnet"
+                else:
+                    network_label = exchange_name
+                    network = "mainnet"
+                
+                return web.json_response({
+                    "connected": True,
+                    "status": "online",
+                    "network": network,
+                    "network_label": network_label,
+                    "exchange": exchange_name,
+                    "balance": 0,
+                    "account_value": 0,
+                    "positions_count": 0,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "warning": "Status check timed out, using cached data"
+                })
             
             if exchange_name == "aster":
                 network_label = "Aster DEX"
@@ -1636,7 +2074,8 @@ def main():
             # Get prices for all trading assets
             for asset in args.assets:
                 try:
-                    current_price = await hyperliquid.get_current_price(asset)
+                    # Add timeout to prevent blocking
+                    current_price = await asyncio.wait_for(hyperliquid.get_current_price(asset), timeout=2.0)
                     if current_price and current_price > 0:
                         # Calculate 24h change from price history if available
                         change_24h = 0.0
@@ -1673,6 +2112,335 @@ def main():
             import traceback
             logging.error(traceback.format_exc())
             return web.json_response({"error": str(e)}, status=500)
+
+    async def sync_trades_to_supabase():
+        """Background task that continuously syncs trades to Supabase database."""
+        if not os.getenv('SUPABASE_URL') or not os.getenv('SUPABASE_KEY'):
+            logging.info("Supabase not configured - skipping trade sync")
+            return
+        
+        # Get binance_api from exchange (if it's BinanceAPI)
+        from src.trading.binance_api import BinanceAPI
+        binance_api = exchange if isinstance(exchange, BinanceAPI) else None
+        
+        if not binance_api:
+            logging.warning("Binance API not initialized - cannot sync trades")
+            return
+        
+        try:
+            from supabase import create_client, Client
+            supabase_url = os.getenv('SUPABASE_URL')
+            supabase_key = os.getenv('SUPABASE_KEY')
+            
+            # Prefer service_role key for server-side operations (bypasses RLS)
+            # If SUPABASE_SERVICE_KEY is set, use it; otherwise use SUPABASE_KEY
+            service_key = os.getenv('SUPABASE_SERVICE_KEY') or supabase_key
+            
+            if not service_key:
+                logging.error("❌ SUPABASE_KEY or SUPABASE_SERVICE_KEY must be set")
+                return
+            
+            supabase: Client = create_client(supabase_url, service_key)
+            
+            # Log which key type is being used
+            if os.getenv('SUPABASE_SERVICE_KEY'):
+                logging.info("🔑 Using SUPABASE_SERVICE_KEY (bypasses RLS)")
+            else:
+                logging.warning("⚠️ Using SUPABASE_KEY (anon key) - may fail if RLS is enabled")
+                logging.warning("   Consider using SUPABASE_SERVICE_KEY for server-side operations")
+        except Exception as e:
+            logging.error(f"❌ Failed to initialize Supabase client: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
+            return
+        
+        logging.info("🔄 Starting initial trade sync to Supabase...")
+        
+        while True:
+            try:
+                # Fetch recent trades from Binance
+                logging.info("📥 Fetching trades from Binance...")
+                trades = await binance_api.get_recent_fills(limit=1000)
+                logging.info(f"📊 Fetched {len(trades)} trades from Binance")
+                
+                if not trades:
+                    logging.info("No trades found, waiting 1 minute before next check...")
+                    await asyncio.sleep(60)  # Wait 1 minute if no trades
+                    continue
+                
+                # Get existing trades from Supabase to avoid duplicates
+                existing_trades_set = set()
+                try:
+                    logging.info("🔍 Checking existing trades in Supabase...")
+                    # Add retry logic for connection issues
+                    for retry in range(3):
+                        try:
+                            result = supabase.table('trades').select('symbol, executed_at, price, size').limit(10000).execute()
+                            if result.data:
+                                logging.info(f"📋 Found {len(result.data)} existing trades in database")
+                                for t in result.data:
+                                    # Normalize timestamp for comparison
+                                    exec_at = t.get('executed_at', '')
+                                    if exec_at:
+                                        # Remove timezone info for comparison
+                                        exec_at_normalized = exec_at.split('+')[0].split('.')[0] if '+' in exec_at or '.' in exec_at else exec_at
+                                        key = f"{t['symbol']}_{exec_at_normalized}_{t['price']}_{t['size']}"
+                                        existing_trades_set.add(key)
+                            else:
+                                logging.info("📋 No existing trades in database (first sync)")
+                            break  # Success, exit retry loop
+                        except Exception as conn_err:
+                            # Check if it's a connection error (httpx may not be available)
+                            is_conn_error = (
+                                isinstance(conn_err, (ConnectionError, OSError)) or
+                                (httpx and isinstance(conn_err, httpx.ConnectError)) or
+                                '10054' in str(conn_err) or  # Windows connection reset
+                                'connection' in str(conn_err).lower() or
+                                'forcibly closed' in str(conn_err).lower()
+                            )
+                            if is_conn_error:
+                                if retry < 2:  # Retry up to 3 times
+                                    wait_time = (retry + 1) * 2  # 2s, 4s, 6s
+                                    logging.warning(f"Supabase connection error (attempt {retry + 1}/3): {conn_err}. Retrying in {wait_time}s...")
+                                    await asyncio.sleep(wait_time)
+                                else:
+                                    logging.warning(f"Could not fetch existing trades after 3 attempts: {conn_err}. Continuing without duplicate check.")
+                                    break
+                            else:
+                                # Not a connection error, re-raise
+                                raise
+                except Exception as e:
+                    logging.warning(f"Could not fetch existing trades: {e}. Continuing without duplicate check.")
+                    logging.warning(f"Could not fetch existing trades: {e}. Continuing without duplicate check.")
+                
+                # Format and filter new trades
+                new_trades = []
+                for trade in trades:
+                    symbol = trade.get('symbol', '').replace('USDT', '')
+                    side = trade.get('side', '').lower()
+                    if side not in ['buy', 'sell']:
+                        side = 'buy' if side == 'buy' else 'sell'
+                    
+                    price = float(trade.get('price', 0))
+                    size = float(trade.get('size', trade.get('qty', 0)))
+                    fee = float(trade.get('fee', trade.get('commission', 0)))
+                    realized_pnl = trade.get('realizedPnl') or trade.get('realized_pnl')
+                    pnl = float(realized_pnl) if realized_pnl is not None else None
+                    
+                    # Convert timestamp to ISO string
+                    timestamp_ms = trade.get('time') or trade.get('timestamp', 0)
+                    if timestamp_ms:
+                        if timestamp_ms > 1e12:  # Already in milliseconds
+                            timestamp_iso = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).isoformat()
+                        else:  # In seconds
+                            timestamp_iso = datetime.fromtimestamp(timestamp_ms, tz=timezone.utc).isoformat()
+                    else:
+                        timestamp_iso = datetime.now(timezone.utc).isoformat()
+                    
+                    # Create composite key for duplicate check
+                    exec_at_normalized = timestamp_iso.split('+')[0].split('.')[0] if '+' in timestamp_iso or '.' in timestamp_iso else timestamp_iso
+                    key = f"{symbol}_{exec_at_normalized}_{price}_{abs(size)}"
+                    
+                    # Only add if not already in database
+                    if key not in existing_trades_set:
+                        new_trades.append({
+                            'symbol': symbol,
+                            'side': side,
+                            'size': abs(size),
+                            'price': price,
+                            'fee': abs(fee),
+                            'pnl': pnl,
+                            'executed_at': timestamp_iso,
+                            'order_id': None,
+                        })
+                        existing_trades_set.add(key)  # Add to set to avoid duplicates in this batch
+                
+                # Insert new trades in batches
+                if new_trades:
+                    try:
+                        logging.info(f"💾 Saving {len(new_trades)} new trades to Supabase...")
+                        # Insert in batches of 100 to avoid overwhelming the database
+                        batch_size = 100
+                        for i in range(0, len(new_trades), batch_size):
+                            batch = new_trades[i:i + batch_size]
+                            result = supabase.table('trades').insert(batch).execute()
+                            logging.info(f"✅ Synced {len(batch)} trades to Supabase (batch {i//batch_size + 1})")
+                        logging.info(f"✅ Total: Synced {len(new_trades)} new trades to Supabase")
+                    except Exception as e:
+                        error_msg = str(e)
+                        logging.error(f"❌ Error inserting trades to Supabase: {error_msg}")
+                        
+                        # Provide helpful error message for RLS issues
+                        if 'row-level security' in error_msg.lower() or '42501' in error_msg:
+                            logging.error("")
+                            logging.error("🔒 ROW LEVEL SECURITY (RLS) ERROR:")
+                            logging.error("   Your Supabase table has RLS enabled, but you're using the anon key.")
+                            logging.error("   Solution: Use SUPABASE_SERVICE_KEY instead of SUPABASE_KEY")
+                            logging.error("")
+                            logging.error("   Steps to fix:")
+                            logging.error("   1. Go to Supabase Dashboard > Settings > API")
+                            logging.error("   2. Copy the 'service_role' key (NOT the 'anon' key)")
+                            logging.error("   3. Add to your .env file: SUPABASE_SERVICE_KEY=your_service_role_key")
+                            logging.error("   4. Restart the agent")
+                            logging.error("")
+                        
+                        import traceback
+                        logging.error(traceback.format_exc())
+                else:
+                    logging.info("ℹ️ No new trades to sync (all trades already in database)")
+                
+                # Wait 5 minutes before next sync
+                logging.info("⏳ Waiting 5 minutes before next sync...")
+                await asyncio.sleep(300)
+                
+            except Exception as e:
+                logging.error(f"Error in trade sync loop: {e}")
+                import traceback
+                logging.error(traceback.format_exc())
+                await asyncio.sleep(60)  # Wait 1 minute on error before retrying
+
+    async def sync_portfolio_assets():
+        """Background task that syncs portfolio assets to database every hour."""
+        # Get dashboard URL from environment
+        dashboard_url = os.getenv('DASHBOARD_URL') or os.getenv('NEXT_PUBLIC_BASE_URL') or 'http://localhost:3001'
+        dashboard_url = dashboard_url.rstrip('/')
+        
+        logging.info("🔄 Starting portfolio assets sync to database...")
+        logging.info(f"   Dashboard URL: {dashboard_url}")
+        
+        # Perform initial sync immediately
+        first_sync = True
+        
+        while True:
+            try:
+                # Call the portfolio assets sync endpoint
+                sync_url = f"{dashboard_url}/api/portfolio/assets/sync"
+                if first_sync:
+                    logging.info(f"📥 Performing initial portfolio assets sync from {sync_url}...")
+                    first_sync = False
+                else:
+                    logging.info(f"📥 Syncing portfolio assets from {sync_url}...")
+                
+                async with ClientSession() as session:
+                    try:
+                        async with session.post(sync_url, timeout=ClientTimeout(total=30)) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                synced_count = data.get('synced', 0)
+                                logging.info(f"✅ Successfully synced {synced_count} portfolio assets to database")
+                            else:
+                                error_text = await response.text()
+                                logging.warning(f"⚠️ Portfolio assets sync returned status {response.status}: {error_text}")
+                    except asyncio.TimeoutError:
+                        logging.warning("⚠️ Portfolio assets sync timed out")
+                    except Exception as e:
+                        logging.warning(f"⚠️ Failed to sync portfolio assets: {e}")
+                
+                # Wait 1 hour (3600 seconds) before next sync
+                logging.info("⏳ Waiting 1 hour before next portfolio assets sync...")
+                await asyncio.sleep(3600)
+                
+            except Exception as e:
+                logging.error(f"❌ Error in portfolio assets sync loop: {e}")
+                import traceback
+                logging.error(traceback.format_exc())
+                # Wait 10 minutes on error before retrying
+                await asyncio.sleep(600)
+
+    async def handle_trades(request):
+        """Return trade history from Binance API."""
+        try:
+            limit = int(request.query.get('limit', 1000))
+            
+            # Check if exchange is BinanceAPI instance
+            from src.trading.binance_api import BinanceAPI
+            binance_api = exchange if isinstance(exchange, BinanceAPI) else None
+            
+            if not binance_api:
+                return web.json_response({
+                    'error': 'Binance API not initialized',
+                    'trades': []
+                }, status=503)
+            
+            # Get all trades using get_recent_fills with timeout
+            try:
+                trades = await asyncio.wait_for(binance_api.get_recent_fills(limit=limit), timeout=12.0)
+            except asyncio.TimeoutError:
+                logger.warning("get_recent_fills timed out after 12s, returning empty trades")
+                return web.json_response({
+                    'trades': [],
+                    'count': 0,
+                    'source': 'binance',
+                    'warning': 'Request timed out'
+                })
+            except Exception as e:
+                logger.warning(f"get_recent_fills error: {e}, returning empty trades")
+                return web.json_response({
+                    'trades': [],
+                    'count': 0,
+                    'source': 'binance',
+                    'warning': f'Error: {str(e)[:100]}'
+                })
+            
+            # Format trades for frontend
+            formatted_trades = []
+            for trade in trades:
+                symbol = trade.get('symbol', '').replace('USDT', '')
+                side = trade.get('side', '').lower()
+                if side not in ['buy', 'sell']:
+                    side = 'buy' if side == 'buy' else 'sell'
+                
+                price = float(trade.get('price', 0))
+                size = float(trade.get('size', trade.get('qty', 0)))
+                fee = float(trade.get('fee', trade.get('commission', 0)))
+                realized_pnl = trade.get('realizedPnl') or trade.get('realized_pnl')
+                pnl = float(realized_pnl) if realized_pnl is not None else None
+                
+                # Convert timestamp to ISO string
+                timestamp_ms = trade.get('time') or trade.get('timestamp', 0)
+                if timestamp_ms:
+                    if timestamp_ms > 1e12:  # Already in milliseconds
+                        timestamp_iso = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).isoformat()
+                    else:  # In seconds
+                        timestamp_iso = datetime.fromtimestamp(timestamp_ms, tz=timezone.utc).isoformat()
+                else:
+                    timestamp_iso = datetime.now(timezone.utc).isoformat()
+                
+                # Create unique ID
+                trade_id = trade.get('id') or trade.get('tradeId')
+                if not trade_id:
+                    # Create hash from trade data
+                    import hashlib
+                    trade_str = f"{symbol}_{side}_{price}_{size}_{timestamp_ms}"
+                    trade_id = hashlib.sha256(trade_str.encode()).hexdigest()[:16]
+                
+                formatted_trades.append({
+                    'id': str(trade_id),
+                    'symbol': symbol,
+                    'side': side,
+                    'size': abs(size),
+                    'price': price,
+                    'fee': abs(fee),
+                    'pnl': pnl,
+                    'timestamp': timestamp_iso,
+                })
+            
+            # Sort by timestamp descending (newest first)
+            formatted_trades.sort(key=lambda t: t['timestamp'], reverse=True)
+            
+            return web.json_response({
+                'trades': formatted_trades,
+                'count': len(formatted_trades),
+                'source': 'binance'
+            })
+        except Exception as e:
+            logger.error(f"Error in handle_trades: {e}")
+            import traceback
+            traceback.print_exc()
+            return web.json_response({
+                'error': str(e),
+                'trades': []
+            }, status=500)
 
     async def handle_orders(request):
         """Return all orders (open + recent fills) from Aster."""
@@ -1924,16 +2692,121 @@ def main():
             logging.error(traceback.format_exc())
             return web.json_response({"error": str(e)}, status=500)
 
+    async def handle_trading_info(request):
+        """Return trading information for a given asset and amount (allocation)."""
+        try:
+            asset = request.query.get('asset', '').upper()
+            amount_str = request.query.get('amount', '0')
+            
+            if not asset:
+                return web.json_response({"error": "asset parameter is required"}, status=400)
+            
+            try:
+                amount = float(amount_str)
+            except (ValueError, TypeError):
+                return web.json_response({"error": "amount must be a valid number"}, status=400)
+            
+            if amount <= 0:
+                return web.json_response({"error": "amount must be greater than 0"}, status=400)
+            
+            # Get current price
+            try:
+                current_price = await hyperliquid.get_current_price(asset)
+                if not current_price or current_price <= 0:
+                    return web.json_response({"error": f"Could not get price for {asset}"}, status=404)
+            except Exception as e:
+                logging.error(f"Error getting price for {asset}: {e}")
+                return web.json_response({"error": f"Error getting price: {str(e)}"}, status=500)
+            
+            # Get trading settings
+            from src.utils.trading_settings import get_trading_settings, get_max_leverage_for_asset, calculate_tp_sl_prices
+            trading_settings = await get_trading_settings()
+            leverage = get_leverage_for_asset(asset, trading_settings.get('leverage', 10))
+            
+            # Get max leverage for asset from exchange
+            max_leverage = await get_max_leverage_for_asset(hyperliquid, asset)
+            leverage = min(leverage, max_leverage)
+            
+            # Calculate position size
+            from src.utils.position_sizing import calculate_profit, calculate_liquidation_price
+            position_size_units = amount / current_price  # Units of asset
+            controlled_value = amount * leverage  # Total notional value
+            
+            # Calculate profit/loss scenarios
+            profit_1pct = calculate_profit(amount, 1.0, leverage)
+            profit_5pct = calculate_profit(amount, 5.0, leverage)
+            loss_1pct = calculate_profit(amount, -1.0, leverage)
+            loss_3pct = calculate_profit(amount, -3.0, leverage)
+            
+            # Calculate TP/SL prices
+            take_profit_percent = trading_settings.get('take_profit_percent', 5.0)
+            stop_loss_percent = trading_settings.get('stop_loss_percent', 3.0)
+            
+            tp_price_long, sl_price_long = calculate_tp_sl_prices(
+                current_price, True, take_profit_percent, stop_loss_percent
+            )
+            tp_price_short, sl_price_short = calculate_tp_sl_prices(
+                current_price, False, take_profit_percent, stop_loss_percent
+            )
+            
+            # Calculate liquidation prices
+            liquidation_long = calculate_liquidation_price(current_price, True, leverage)
+            liquidation_short = calculate_liquidation_price(current_price, False, leverage)
+            
+            return web.json_response({
+                "asset": asset,
+                "current_price": round(current_price, 2),
+                "allocation_usd": round(amount, 2),
+                "leverage": leverage,
+                "max_leverage": max_leverage,
+                "position_size_units": round(position_size_units, 8),
+                "controlled_value_usd": round(controlled_value, 2),
+                "profit_scenarios": {
+                    "profit_1pct": round(profit_1pct, 2),
+                    "profit_5pct": round(profit_5pct, 2),
+                    "loss_1pct": round(loss_1pct, 2),
+                    "loss_3pct": round(loss_3pct, 2),
+                },
+                "long_position": {
+                    "entry_price": round(current_price, 2),
+                    "tp_price": round(tp_price_long, 2),
+                    "sl_price": round(sl_price_long, 2),
+                    "liquidation_price": round(liquidation_long, 2),
+                    "tp_profit": round(profit_5pct, 2),
+                    "sl_loss": round(loss_3pct, 2),
+                },
+                "short_position": {
+                    "entry_price": round(current_price, 2),
+                    "tp_price": round(tp_price_short, 2),
+                    "sl_price": round(sl_price_short, 2),
+                    "liquidation_price": round(liquidation_short, 2),
+                    "tp_profit": round(profit_5pct, 2),
+                    "sl_loss": round(loss_3pct, 2),
+                },
+                "trading_settings": {
+                    "take_profit_percent": take_profit_percent,
+                    "stop_loss_percent": stop_loss_percent,
+                }
+            })
+        except Exception as e:
+            logging.error(f"Error in handle_trading_info: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
+            return web.json_response({"error": str(e)}, status=500)
+
     async def start_api(app):
         """Register HTTP endpoints for observing diary entries, logs, positions, and status."""
         app.router.add_get('/diary', handle_diary)
         app.router.add_get('/logs', handle_logs)
         app.router.add_get('/positions', handle_positions)
         app.router.add_get('/status', handle_status)
+        app.router.add_get('/balances', handle_balances)  # Add balances endpoint
         app.router.add_get('/api/orders', handle_orders)
         app.router.add_get('/api/pnl', handle_pnl)
         app.router.add_get('/api/performance', handle_performance)
         app.router.add_get('/api/prices', handle_prices)
+        app.router.add_get('/api/trading-info', handle_trading_info)  # Add trading info endpoint
+        app.router.add_get('/api/trades', handle_trades)  # Add trades endpoint
         app.router.add_post('/api/test', handle_status)  # Alias for compatibility
         app.router.add_post('/api/alert/signal', handle_alert_signal)
 
@@ -1990,6 +2863,38 @@ def main():
         await site.start()
         
         logging.info(f"🌐 HTTP API server started on {CFG.get('api_host')}:{CFG.get('api_port')}")
+        
+        # Start background task to continuously sync trades to Supabase
+        # Check if exchange is BinanceAPI instance
+        from src.trading.binance_api import BinanceAPI
+        is_binance = isinstance(exchange, BinanceAPI)
+        
+        supabase_url = os.getenv('SUPABASE_URL')
+        supabase_key = os.getenv('SUPABASE_KEY')
+        
+        if is_binance and supabase_url and supabase_key:
+            # Pass exchange as binance_api to the sync function
+            asyncio.create_task(sync_trades_to_supabase())
+            logging.info("🔄 Background trade sync to Supabase started")
+            logging.info(f"   Supabase URL: {supabase_url[:30]}...")
+        elif is_binance:
+            logging.info("ℹ️ Supabase not configured - trade sync disabled")
+            if not supabase_url:
+                logging.info("   Missing: SUPABASE_URL environment variable")
+            if not supabase_key:
+                logging.info("   Missing: SUPABASE_KEY environment variable")
+            logging.info("   Add SUPABASE_URL and SUPABASE_KEY to your .env file to enable trade sync")
+        
+        # Start background task to sync portfolio assets every hour
+        # This works for both Binance and Aster exchanges
+        dashboard_url = os.getenv('DASHBOARD_URL') or os.getenv('NEXT_PUBLIC_BASE_URL')
+        if dashboard_url:
+            asyncio.create_task(sync_portfolio_assets())
+            logging.info("🔄 Background portfolio assets sync started (every hour)")
+        else:
+            logging.info("ℹ️ Dashboard URL not configured - portfolio assets sync disabled")
+            logging.info("   Add DASHBOARD_URL or NEXT_PUBLIC_BASE_URL to your .env file to enable portfolio sync")
+        
         await run_loop()
 
     def calculate_total_return(state, trade_log):

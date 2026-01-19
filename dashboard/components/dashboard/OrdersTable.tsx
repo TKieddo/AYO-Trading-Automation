@@ -53,8 +53,11 @@ export function OrdersTable() {
           const data = await response.json();
           setOrders(data);
         }
-      } catch (error) {
-        console.error("Failed to fetch orders:", error);
+      } catch (error: any) {
+        // Silently handle connection errors - Python agent may not be running
+        if (error.name !== 'TypeError' || !error.message?.includes('fetch')) {
+          console.error("Failed to fetch orders:", error);
+        }
       } finally {
         setLoading(false);
       }

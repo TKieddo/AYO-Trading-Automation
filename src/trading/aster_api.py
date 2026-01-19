@@ -642,7 +642,7 @@ class AsterAPI:
         """Retrieve account state with positions.
         
         Returns:
-            Dictionary with balance, total_value, and positions
+            Dictionary with balance, total_value, positions, and asset_balances
         """
         try:
             # Get account info (v3 endpoint)
@@ -650,10 +650,36 @@ class AsterAPI:
                 lambda: self._signed_request('GET', '/fapi/v3/account')
             )
             
+            # Get balances (v3 endpoint) - returns all asset balances
+            balances = await self._retry(
+                lambda: self._signed_request('GET', '/fapi/v3/balance')
+            )
+            
             # Get positions (v3 endpoint)
             positions = await self._retry(
                 lambda: self._signed_request('GET', '/fapi/v3/positionRisk')
             )
+            
+            # Extract all asset balances from the balances response
+            asset_balances = []
+            if isinstance(balances, list):
+                for balance_data in balances:
+                    asset_name = balance_data.get('asset', '')
+                    wallet_balance = float(balance_data.get('balance', 0) or 0)
+                    available_balance = float(balance_data.get('availableBalance', 0) or 0)
+                    cross_wallet_balance = float(balance_data.get('crossWalletBalance', 0) or 0)
+                    cross_unrealized_pnl = float(balance_data.get('crossUnPnl', 0) or 0)
+                    
+                    # Only include assets with non-zero balance
+                    if wallet_balance > 0 or cross_wallet_balance > 0:
+                        asset_balances.append({
+                            'asset': asset_name,
+                            'walletBalance': wallet_balance,
+                            'availableBalance': available_balance,
+                            'crossWalletBalance': cross_wallet_balance,
+                            'crossUnPnl': cross_unrealized_pnl,
+                            'positionValue': cross_wallet_balance,  # For compatibility with frontend
+                        })
             
             # Normalize positions
             enriched_positions = []
@@ -680,11 +706,12 @@ class AsterAPI:
             return {
                 'balance': available_balance,
                 'total_value': total_equity + total_unrealized,
-                'positions': enriched_positions
+                'positions': enriched_positions,
+                'asset_balances': asset_balances  # Include all asset balances
             }
         except Exception as e:
             logging.error(f"Get user state error: {e}")
-            return {'balance': 0, 'total_value': 0, 'positions': []}
+            return {'balance': 0, 'total_value': 0, 'positions': [], 'asset_balances': []}
     
     async def get_current_price(self, asset: str) -> float:
         """Return the latest price for an asset.

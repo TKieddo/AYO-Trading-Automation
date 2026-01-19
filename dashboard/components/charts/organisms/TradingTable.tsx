@@ -39,7 +39,7 @@ export function TradingTable({ activeTab, onPositionSelect, selectedPositionId }
     };
 
     fetchData();
-    const interval = setInterval(fetchData, 3000);
+    const interval = setInterval(fetchData, 2000); // Update every 2s for real-time prices
     return () => clearInterval(interval);
   }, []);
 
@@ -149,10 +149,35 @@ export function TradingTable({ activeTab, onPositionSelect, selectedPositionId }
   };
 
   const calculatePnLPercent = (position: Position) => {
-    if (!position.entryPrice || position.entryPrice === 0) return 0;
-    const pnl = position.unrealizedPnl || 0;
-    const notional = Math.abs(position.size) * position.entryPrice;
-    return notional > 0 ? (pnl / notional) * 100 : 0;
+    // Calculate ROI (Return on Investment) matching Binance display
+    // ROI (%) = (PnL ÷ Initial Margin) × 100
+    // Use actual initial margin from exchange if available, otherwise calculate
+    const unrealizedPnl = Number(position.unrealizedPnl) || 0;
+    const initialMargin = Number(position.initialMargin) || 0;
+    
+    // Use actual margin from exchange if available (most accurate)
+    if (initialMargin > 0) {
+      const roi = (unrealizedPnl / initialMargin) * 100;
+      // Ensure ROI is calculated correctly - handle edge cases
+      return isFinite(roi) && !isNaN(roi) ? roi : 0;
+    }
+    
+    // Fallback: calculate from notional and leverage
+    // For Binance USDT-M futures: size is position quantity, notional = size * entryPrice
+    const entryPrice = Number(position.entryPrice) || 0;
+    const size = Math.abs(Number(position.size) || 0);
+    const leverage = Number(position.leverage) || 1;
+    
+    if (entryPrice <= 0 || size <= 0 || leverage <= 0) return 0;
+    
+    const notionalValue = size * entryPrice;
+    const calculatedMargin = notionalValue / leverage;
+    
+    if (calculatedMargin <= 0) return 0;
+    
+    const roi = (unrealizedPnl / calculatedMargin) * 100;
+    // Ensure ROI is calculated correctly - handle edge cases
+    return isFinite(roi) && !isNaN(roi) ? roi : 0;
   };
 
   // Get asset logo/icon URL (using placeholder for now)
@@ -367,14 +392,30 @@ export function TradingTable({ activeTab, onPositionSelect, selectedPositionId }
                             </div>
                           </td>
 
-                    {/* Size */}
+                    {/* Size - Display notional value (leverage × margin) in USDT, matching Binance */}
                     <td className="py-2 px-3 text-right border-r border-[#E0E0E0]">
-                      <div className="font-medium text-[#1A1A1A] text-xs">
-                        {formatNumber(Math.abs(position.size || 0), 4)}
-              </div>
-                      <div className="text-[10px] text-[#999] mt-0.5">
-                        {formatNumber(Math.abs(position.size || 0), 2)} {assetSymbol}
-            </div>
+                      {(() => {
+                        const margin = Number(position.initialMargin) || 0;
+                        const leverage = Number(position.leverage) || 1;
+                        const entryPrice = Number(position.entryPrice) || 0;
+                        const size = Number(position.size) || 0;
+                        // Calculate notional: use actual margin if available, otherwise calculate
+                        const notionalValue = margin > 0 
+                          ? margin * leverage 
+                          : (entryPrice > 0 && size > 0 ? size * entryPrice : 0);
+                        return (
+                          <>
+                            <div className="font-medium text-[#1A1A1A] text-xs">
+                              {formatCurrency(notionalValue)}
+                            </div>
+                            {position.leverage && (
+                              <div className="text-[10px] text-[#999] mt-0.5">
+                                {position.leverage}x
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
                     </td>
 
                     {/* PnL */}

@@ -5,7 +5,7 @@ export type HistoryTrade = {
   size: number;
   price: number;
   fee: number;
-  pnl: number;
+  pnl: number | null; // Can be null for trades without realized PnL (open positions)
   timestamp: string;
 };
 

@@ -76,17 +76,32 @@ export async function POST(req: NextRequest) {
     }
 
     // Upsert to portfolio_activities
+    // Handle partial unique index by inserting individually
     if (activitiesToSave.length > 0) {
-      const { error: upsertError } = await sb
-        .from("portfolio_activities")
-        .upsert(activitiesToSave as any, {
-          onConflict: "income_id",
-          ignoreDuplicates: false,
-        });
-
-      if (upsertError) {
-        console.error("Error upserting portfolio activities:", upsertError);
-        throw upsertError;
+      let successCount = 0;
+      for (const activity of activitiesToSave) {
+        try {
+          const { error } = await sb
+            .from("portfolio_activities")
+            .upsert(activity as any, {
+              onConflict: "income_id",
+              ignoreDuplicates: false,
+            });
+          if (!error) {
+            successCount++;
+          } else if (error.code !== '23505' && error.code !== '42P10') {
+            // Only log non-duplicate errors
+            console.error("Error upserting portfolio activity:", error);
+          }
+        } catch (err: any) {
+          // Ignore duplicate errors (23505 is unique constraint violation, 42P10 is constraint mismatch)
+          if (err.code !== '23505' && err.code !== '42P10') {
+            console.error("Error upserting portfolio activity:", err);
+          }
+        }
+      }
+      if (successCount < activitiesToSave.length) {
+        console.log(`Synced ${successCount} of ${activitiesToSave.length} activities (some may be duplicates)`);
       }
     }
 

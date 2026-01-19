@@ -1,16 +1,17 @@
 import { NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase/client";
 import { persistPrices } from "@/lib/supabase/persist";
+import { cacheGet, cacheSet } from "@/lib/http";
 
-const BASE = (process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3001").replace(/\/$/, "");
+const BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(/\/$/, "");
 
 export async function GET() {
 	try {
 		// Add timeout to prevent hanging
 		const controller = new AbortController();
-		const timeoutId = setTimeout(() => controller.abort(), 20000);
+		const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 		
-		const response = await fetch(`${BASE}/agent/api/prices`, {
+		const response = await fetch(`${BASE}/api/prices`, {
 			method: "GET",
 			headers: { "Content-Type": "application/json" },
 			cache: "no-store",
@@ -40,10 +41,10 @@ export async function GET() {
 		return NextResponse.json(data);
 	} catch (error: any) {
 		// Silently handle connection errors - Python agent may not be running
-		if (error.name === 'AbortError') {
-			console.warn("Prices fetch timed out");
+		if (error.name === 'AbortError' || error.message?.includes('aborted')) {
+			console.log("Prices fetch timed out, using cache");
 		} else if (error.code !== 'ECONNREFUSED' && !error.message?.includes('fetch failed') && !error.message?.includes('404')) {
-			console.error("Failed to fetch prices from Python API:", error);
+			console.warn("Failed to fetch prices from Python API:", error.message);
 		}
 		const cached = cacheGet<any[]>("prices");
 		if (cached) return NextResponse.json(cached);
@@ -72,6 +73,7 @@ export async function GET() {
 		console.error("Failed to fetch prices from Supabase:", e);
 	}
 
-	return NextResponse.json([], { status: 500 });
+	// Always return a valid JSON array, even on error
+	return NextResponse.json([], { status: 200 });
 }
 

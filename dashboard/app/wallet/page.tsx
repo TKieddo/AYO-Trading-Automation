@@ -59,9 +59,34 @@ async function fetchBalances() {
   const resp = await fetch(apiEndpoint, { cache: "no-store" });
   try {
     const json = await resp.json();
-    if (!resp.ok) return { balances: [], error: json?.error || `Request failed (${resp.status})`, exchange };
-    return { ...json, exchange };
-  } catch (e) {
+    if (!resp.ok) {
+      console.error("Balances API error:", json?.error || `Request failed (${resp.status})`);
+      return { balances: [], error: json?.error || `Request failed (${resp.status})`, exchange };
+    }
+    
+    // Ensure balances is always an array
+    const balances = Array.isArray(json.balances) ? json.balances : [];
+    
+    // Log for debugging
+    if (balances.length === 0) {
+      console.warn("No balances returned from API. Response:", {
+        hasBalances: !!json.balances,
+        balancesType: typeof json.balances,
+        balancesValue: json.balances,
+        accountValue: json.accountValue,
+        exchange: json.exchange,
+      });
+    } else {
+      console.log(`Received ${balances.length} balances from API:`, balances.map((b: any) => b.asset));
+    }
+    
+    return { 
+      ...json, 
+      balances, // Use the normalized balances array
+      exchange: json.exchange || exchange 
+    };
+  } catch (e: any) {
+    console.error("Error parsing balances response:", e.message || e);
     return { balances: [], error: "Failed to parse response", exchange };
   }
 }
@@ -83,11 +108,23 @@ export default async function WalletPage() {
   const exchangeLabel = exchangeName;
 
   // Filter balances to only show assets where Balance/Position is greater than 0
+  // Use a small threshold to avoid floating point precision issues
   const filteredBalances = balances.filter((b: any) => {
     // This matches the exact calculation used in the Balance/Position column
     const balancePosition = Number(b.positionValue || b.crossWalletBalance || b.walletBalance || 0);
-    return balancePosition > 0;
+    // Use a small threshold (0.00000001) to handle floating point precision
+    return Math.abs(balancePosition) > 1e-8;
   });
+  
+  // Debug logging
+  if (filteredBalances.length === 0 && balances.length > 0) {
+    console.warn("All balances filtered out. Original balances:", balances.map((b: any) => ({
+      asset: b.asset,
+      positionValue: b.positionValue,
+      crossWalletBalance: b.crossWalletBalance,
+      walletBalance: b.walletBalance,
+    })));
+  }
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
@@ -119,6 +156,32 @@ export default async function WalletPage() {
       {error && (
         <div className="mb-6 rounded-xl border border-rose-200 bg-rose-50 text-rose-800 px-4 py-3 text-sm whitespace-pre-line">
           {String(error)}
+        </div>
+      )}
+
+      {/* Debug: Show raw balances if filtered balances are empty */}
+      {filteredBalances.length === 0 && (
+        <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 px-4 py-3 text-sm">
+          <div className="font-semibold mb-2">⚠️ Debug Info:</div>
+          <div className="text-xs font-mono whitespace-pre-wrap">
+            {balances.length > 0 ? (
+              <>
+                <div className="mb-2">Balances filtered out (showing raw data):</div>
+                {JSON.stringify(balances, null, 2)}
+              </>
+            ) : (
+              <>
+                <div>No balances received from API.</div>
+                <div className="mt-2">Exchange: {exchange}</div>
+                <div>Account Value: {accountValue}</div>
+                <div>Error: {error || "None"}</div>
+                <div className="mt-2">Try checking:</div>
+                <div>1. Python backend is running on port 3000</div>
+                <div>2. /balances endpoint is accessible</div>
+                <div>3. Check browser console for API errors</div>
+              </>
+            )}
+          </div>
         </div>
       )}
 

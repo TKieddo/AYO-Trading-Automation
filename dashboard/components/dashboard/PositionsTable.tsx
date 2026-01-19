@@ -13,7 +13,12 @@ export function PositionsTable() {
   useEffect(() => {
     const fetchPositions = async () => {
       try {
-        const response = await fetch("/api/positions");
+        const response = await fetch("/api/positions", {
+          cache: "no-store",
+          headers: {
+            "Cache-Control": "no-cache",
+          },
+        });
         if (response.ok) {
           const data = await response.json();
           setPositions(data);
@@ -26,7 +31,7 @@ export function PositionsTable() {
     };
 
     fetchPositions();
-    const interval = setInterval(fetchPositions, 5000); // Update every 5s
+    const interval = setInterval(fetchPositions, 2000); // Update every 2s for real-time prices
 
     return () => clearInterval(interval);
   }, []);
@@ -79,7 +84,7 @@ export function PositionsTable() {
                   Side
                 </th>
                   <th className="text-right py-3 px-4 font-medium text-white/70">
-                  Size
+                  Size / Leverage
                 </th>
                   <th className="text-right py-3 px-4 font-medium text-white/70">
                   Entry
@@ -99,10 +104,52 @@ export function PositionsTable() {
                 {positions.map((position) => {
                 const isLong = position.side === "long";
                 const isProfit = position.unrealizedPnl >= 0;
-                const pnlPercent =
-                  ((position.currentPrice - position.entryPrice) /
-                    position.entryPrice) *
-                  100;
+                
+                // Get raw size (position amount)
+                const rawSize = Math.abs(Number(position.size) || 0);
+                
+                // Calculate notional value (size in USDT) = leverage * margin OR use notional from API
+                let notionalValue: number | null = position.notional != null ? Number(position.notional) : null;
+                
+                // Fallback: calculate notional from leverage * margin if not provided
+                if (notionalValue == null && position.leverage && position.initialMargin) {
+                  const leverage = Number(position.leverage);
+                  const margin = Number(position.initialMargin);
+                  if (leverage > 0 && margin > 0) {
+                    notionalValue = leverage * margin;
+                  }
+                }
+                
+                // Fallback: calculate notional from size * entryPrice if still not available
+                if (notionalValue == null && rawSize > 0 && position.entryPrice) {
+                  notionalValue = rawSize * position.entryPrice;
+                }
+                
+                // Use ROI directly from Binance API (roiPercent field) with fallback calculation
+                let roiPercent: number | null = null;
+                if (position.roiPercent != null && position.roiPercent !== undefined && !isNaN(Number(position.roiPercent))) {
+                  roiPercent = Number(position.roiPercent);
+                } else if (position.roi != null && position.roi !== undefined && !isNaN(Number(position.roi))) {
+                  roiPercent = Number(position.roi);
+                }
+                
+                // Fallback: calculate ROI if not provided
+                if (roiPercent == null && position.initialMargin && position.initialMargin > 0 && position.unrealizedPnl != null) {
+                  roiPercent = (position.unrealizedPnl / position.initialMargin) * 100;
+                }
+                
+                // Use leverage directly from Binance API
+                let leverage: number | null = null;
+                if (position.leverage != null && position.leverage !== undefined && !isNaN(Number(position.leverage))) {
+                  leverage = Number(position.leverage);
+                }
+                
+                // Use openTime from Binance API (timestamp in ms) or openedAt (ISO string)
+                let openedAtTime: string | number | undefined = position.openedAt;
+                if (position.openTime) {
+                  // Convert timestamp in ms to ISO string for formatRelativeTime
+                  openedAtTime = new Date(position.openTime).toISOString();
+                }
 
                 return (
                   <tr
@@ -131,14 +178,17 @@ export function PositionsTable() {
                       </div>
                     </td>
                     <td className="py-3 px-4 text-right">
+                      {/* Display notional value (size in USDT) = leverage * margin */}
                       <div className="text-white">
-                        {formatNumber(position.size, 6)}
+                        {notionalValue != null && notionalValue > 0 
+                          ? formatCurrency(notionalValue) 
+                          : "-"}
                       </div>
-                      {position.leverage && (
+                      {leverage != null && !isNaN(leverage) && leverage > 0 ? (
                         <div className="text-xs text-white/50">
-                          {position.leverage}x
+                          {Math.round(leverage * 100) / 100}x
                         </div>
-                      )}
+                      ) : null}
                     </td>
                     <td className="py-3 px-4 text-right text-white/70">
                       {formatCurrency(position.entryPrice)}
@@ -147,16 +197,20 @@ export function PositionsTable() {
                       <div className="text-white">
                         {formatCurrency(position.currentPrice)}
                       </div>
-                      <div
-                        className={`text-xs ${
-                          isProfit
-                            ? "text-emerald-400"
-                            : "text-red-400"
-                        }`}
-                      >
-                        {isLong ? "+" : "-"}
-                        {Math.abs(pnlPercent).toFixed(2)}%
-                      </div>
+                      {roiPercent != null ? (
+                        <div
+                          className={`text-xs ${
+                            isProfit
+                              ? "text-emerald-400"
+                              : "text-red-400"
+                          }`}
+                        >
+                          {roiPercent >= 0 ? "+" : ""}
+                          {roiPercent.toFixed(2)}%
+                        </div>
+                      ) : (
+                        <div className="text-xs text-white/50">-</div>
+                      )}
                     </td>
                     <td className="py-3 px-4 text-right">
                       <div
@@ -170,7 +224,7 @@ export function PositionsTable() {
                       </div>
                     </td>
                     <td className="py-3 px-4 text-right text-xs text-white/50">
-                      {formatRelativeTime(position.openedAt)}
+                      {openedAtTime ? formatRelativeTime(openedAtTime) : "N/A"}
                     </td>
                   </tr>
                 );

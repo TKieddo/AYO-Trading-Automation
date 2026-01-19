@@ -113,11 +113,18 @@ export async function GET(req: NextRequest) {
         }
       } catch (error: any) {
         console.error("Error fetching income history from Aster API:", error);
-        // If it's a rate limit or similar, break and use what we have
-        if (error.message?.includes("429") || error.message?.includes("rate limit")) {
+        // If it's a rate limit, network error, or timeout, break and use what we have
+        if (error.message?.includes("429") || 
+            error.message?.includes("rate limit") ||
+            error.message?.includes("timeout") ||
+            error.message?.includes("network error") ||
+            error.message?.includes("Unable to connect")) {
+          console.warn("Stopping income history fetch due to:", error.message);
           break;
         }
-        throw error;
+        // For other errors, also break to avoid infinite loops
+        console.warn("Stopping income history fetch due to error:", error.message);
+        break;
       }
     }
 
@@ -161,17 +168,32 @@ export async function GET(req: NextRequest) {
     }
 
     // Step 4: Upsert to database (prevent duplicates via income_id)
+    // Handle partial unique index by inserting individually
     if (activitiesToSave.length > 0) {
-      const { error: upsertError } = await sb
-        .from("portfolio_activities")
-        .upsert(activitiesToSave as any, {
-          onConflict: "income_id",
-          ignoreDuplicates: false,
-        });
-
-      if (upsertError) {
-        console.error("Error upserting portfolio activities:", upsertError);
-        throw upsertError;
+      let successCount = 0;
+      for (const activity of activitiesToSave) {
+        try {
+          const { error } = await sb
+            .from("portfolio_activities")
+            .upsert(activity as any, {
+              onConflict: "income_id",
+              ignoreDuplicates: false,
+            });
+          if (!error) {
+            successCount++;
+          } else if (error.code !== '23505' && error.code !== '42P10') {
+            // Only log non-duplicate errors
+            console.error("Error upserting portfolio activity:", error);
+          }
+        } catch (err: any) {
+          // Ignore duplicate errors (23505 is unique constraint violation, 42P10 is constraint mismatch)
+          if (err.code !== '23505' && err.code !== '42P10') {
+            console.error("Error upserting portfolio activity:", err);
+          }
+        }
+      }
+      if (successCount < activitiesToSave.length) {
+        console.log(`Synced ${successCount} of ${activitiesToSave.length} activities (some may be duplicates)`);
       }
     }
 

@@ -51,16 +51,19 @@ export function WinsLosses({ winsAndLosses }: Props) {
                 </thead>
                 <tbody>
                   {winsAndLosses.wins.length > 0 ? (
-                    winsAndLosses.wins.map(t => (
-                      <tr key={`win-${t.id}`} className="border-b border-white/50 hover:bg-white/30">
-                        <td className="py-2 px-3 text-slate-600 whitespace-nowrap">{new Date(t.timestamp).toLocaleString()}</td>
-                        <td className="py-2 px-3 font-semibold text-slate-800">{t.symbol}</td>
-                        <td className="py-2 px-3 text-right text-slate-800">{formatNumber(t.size, 6)}</td>
-                        <td className="py-2 px-3 text-right text-slate-600">{formatCurrency(t.price)}</td>
-                        <td className="py-2 px-3 text-right text-slate-600">{formatCurrency(t.fee)}</td>
-                        <td className="py-2 px-3 text-right font-semibold text-emerald-700">{formatCurrency(t.pnl)}</td>
-                      </tr>
-                    ))
+                    winsAndLosses.wins.map(t => {
+                      const pnl = t.pnl != null ? t.pnl : 0;
+                      return (
+                        <tr key={`win-${t.id}`} className="border-b border-white/50 hover:bg-white/30">
+                          <td className="py-2 px-3 text-slate-600 whitespace-nowrap">{new Date(t.timestamp).toLocaleString()}</td>
+                          <td className="py-2 px-3 font-semibold text-slate-800">{t.symbol}</td>
+                          <td className="py-2 px-3 text-right text-slate-800">{formatNumber(t.size, 6)}</td>
+                          <td className="py-2 px-3 text-right text-slate-600">{formatCurrency(t.price)}</td>
+                          <td className="py-2 px-3 text-right text-slate-600">{formatCurrency(t.fee)}</td>
+                          <td className="py-2 px-3 text-right font-semibold text-emerald-700">{formatCurrency(pnl)}</td>
+                        </tr>
+                      );
+                    })
                   ) : (
                     <tr>
                       <td colSpan={6} className="py-8 px-3 text-center text-slate-600 text-xs">No winning trades yet</td>
@@ -103,16 +106,19 @@ export function WinsLosses({ winsAndLosses }: Props) {
                 </thead>
                 <tbody>
                   {winsAndLosses.losses.length > 0 ? (
-                    winsAndLosses.losses.map(t => (
-                      <tr key={`loss-${t.id}`} className="border-b border-white/50 hover:bg-white/30">
-                        <td className="py-2 px-3 text-slate-600 whitespace-nowrap">{new Date(t.timestamp).toLocaleString()}</td>
-                        <td className="py-2 px-3 font-semibold text-slate-800">{t.symbol}</td>
-                        <td className="py-2 px-3 text-right text-slate-800">{formatNumber(t.size, 6)}</td>
-                        <td className="py-2 px-3 text-right text-slate-600">{formatCurrency(t.price)}</td>
-                        <td className="py-2 px-3 text-right text-slate-600">{formatCurrency(t.fee)}</td>
-                        <td className="py-2 px-3 text-right font-semibold text-slate-900">{formatCurrency(t.pnl)}</td>
-                      </tr>
-                    ))
+                    winsAndLosses.losses.map(t => {
+                      const pnl = t.pnl != null ? t.pnl : 0;
+                      return (
+                        <tr key={`loss-${t.id}`} className="border-b border-white/50 hover:bg-white/30">
+                          <td className="py-2 px-3 text-slate-600 whitespace-nowrap">{new Date(t.timestamp).toLocaleString()}</td>
+                          <td className="py-2 px-3 font-semibold text-slate-800">{t.symbol}</td>
+                          <td className="py-2 px-3 text-right text-slate-800">{formatNumber(t.size, 6)}</td>
+                          <td className="py-2 px-3 text-right text-slate-600">{formatCurrency(t.price)}</td>
+                          <td className="py-2 px-3 text-right text-slate-600">{formatCurrency(t.fee)}</td>
+                          <td className="py-2 px-3 text-right font-semibold text-slate-900">{formatCurrency(pnl)}</td>
+                        </tr>
+                      );
+                    })
                   ) : (
                     <tr>
                       <td colSpan={6} className="py-8 px-3 text-center text-slate-600 text-xs">No losing trades yet</td>

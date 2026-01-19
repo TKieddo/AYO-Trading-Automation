@@ -167,24 +167,44 @@ export async function GET(req: NextRequest) {
     }
 
     // Step 3: Save/Update all orders to Supabase
-      if (sb && ordersToSave.length > 0) {
-        try {
+    if (sb && ordersToSave.length > 0) {
+      try {
         console.log(`Attempting to save ${ordersToSave.length} orders to Supabase...`);
         console.log(`Sample order to save:`, ordersToSave[0]);
         
-          // Upsert orders by order_id (update if exists, insert if new)
+        // Upsert orders by order_id (update if exists, insert if new)
+        // Note: order_id is text and has a unique index (orders_order_id_key), so upsert should work
         const { data, error } = await sb.from("orders").upsert(ordersToSave as any, {
-            onConflict: "order_id",
-          });
+          onConflict: "order_id",
+          ignoreDuplicates: false,
+        });
         
         if (error) {
           console.error("Supabase upsert error:", error);
-          throw error;
+          // If unique constraint error, try individual inserts with error handling
+          if (error.code === '23505' || error.message?.includes('unique') || error.message?.includes('duplicate')) {
+            console.log("Handling duplicate orders individually...");
+            let successCount = 0;
+            for (const order of ordersToSave) {
+              try {
+                const { error: singleError } = await sb.from("orders").upsert(order as any, {
+                  onConflict: "order_id",
+                  ignoreDuplicates: false,
+                });
+                if (!singleError) successCount++;
+              } catch (singleErr: any) {
+                // Ignore individual errors - order may already exist
+              }
+            }
+            console.log(`Successfully saved/updated ${successCount} of ${ordersToSave.length} orders to Supabase`);
+          } else {
+            throw error;
+          }
+        } else {
+          console.log(`Successfully saved/updated ${ordersToSave.length} orders to Supabase (${apiOrders.length} from API)`);
         }
-        
-        console.log(`Successfully saved/updated ${ordersToSave.length} orders to Supabase (${apiOrders.length} from API)`);
-        } catch (error: any) {
-          console.error("Error saving orders to Supabase:", error);
+      } catch (error: any) {
+        console.error("Error saving orders to Supabase:", error);
         console.error("Error details:", error.message, error.code, error.details);
       }
     } else if (sb && ordersToSave.length === 0 && apiOrders.length > 0) {
@@ -206,14 +226,30 @@ export async function GET(req: NextRequest) {
         
         const { data, error } = await sb.from("orders").upsert(apiOrdersToSave as any, {
           onConflict: "order_id",
+          ignoreDuplicates: false,
         });
         
         if (error) {
           console.error("Supabase upsert error for API orders:", error);
-          throw error;
+          // Try individual inserts if batch fails
+          if (error.code === '23505' || error.message?.includes('unique') || error.message?.includes('duplicate')) {
+            let successCount = 0;
+            for (const order of apiOrdersToSave) {
+              try {
+                const { error: singleError } = await sb.from("orders").upsert(order as any, {
+                  onConflict: "order_id",
+                  ignoreDuplicates: false,
+                });
+                if (!singleError) successCount++;
+              } catch {}
+            }
+            console.log(`Successfully saved ${successCount} of ${apiOrdersToSave.length} API orders to Supabase`);
+          } else {
+            throw error;
+          }
+        } else {
+          console.log(`Successfully saved ${apiOrdersToSave.length} API orders to Supabase`);
         }
-        
-        console.log(`Successfully saved ${apiOrdersToSave.length} API orders to Supabase`);
       } catch (error: any) {
         console.error("Error saving API orders directly to Supabase:", error);
         console.error("Error details:", error.message, error.code, error.details);

@@ -18,8 +18,12 @@ export interface Position {
   liquidationPrice: number;
   unrealizedPnl: number;
   realizedPnl: number;
-  leverage?: number;
-  openedAt: string;
+  leverage?: number; // From Binance API
+  initialMargin?: number; // Actual margin used (from exchange)
+  roiPercent?: number; // ROI percentage from Binance API (unRealizedProfit / positionInitialMargin * 100)
+  notional?: number; // Notional value from Binance API
+  openedAt: string; // ISO timestamp or timestamp in ms
+  openTime?: number; // Timestamp in milliseconds from Binance API
   updatedAt: string;
 }
 

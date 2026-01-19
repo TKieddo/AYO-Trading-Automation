@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 
-const PYTHON_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+const PYTHON_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
 export async function GET() {
   try {
     // Create AbortController for timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 10 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout for faster failure
     
     const response = await fetch(`${PYTHON_API_URL}/status`, {
       method: "GET",

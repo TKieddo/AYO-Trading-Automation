@@ -264,7 +264,8 @@ function calculatePnLFromTrades(trades: any[], startDate: Date | null, groupBy: 
       // Map to: 0=Monday, 1=Tuesday, ..., 6=Sunday for display
       const dayOfWeek = executedAt.getDay(); // Local time
       const dayIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Convert Sunday=0 to Sunday=6
-      const dayNames = ["M", "T", "W", "T", "F", "S", "S"];
+      // Use distinct labels: "Sa" for Saturday, "Su" for Sunday to avoid confusion
+      const dayNames = ["M", "T", "W", "T", "F", "Sa", "Su"]; // Mon, Tue, Wed, Thu, Fri, Sat, Sun
       periodKey = dayNames[dayIndex];
       periodTimestamp = currentWeekStart.toISOString();
     } else if (groupBy === "month") {
@@ -312,11 +313,28 @@ function calculatePnLFromTrades(trades: any[], startDate: Date | null, groupBy: 
       const periodStart = new Date(currentYear, currentPeriodIndex * 2, 1, 0, 0, 0, 0);
       periodTimestamp = periodStart.toISOString();
     } else {
-      // Default: group by day
-      const dayKey = `${executedAt.getUTCFullYear()}-${String(executedAt.getUTCMonth() + 1).padStart(2, '0')}-${String(executedAt.getUTCDate()).padStart(2, '0')}`;
+      // Default: group by day - use LOCAL time to ensure proper day boundaries
+      // This ensures trades are grouped by the actual calendar day in the user's timezone
+      // Each day should be completely isolated - trades from Saturday only go to Saturday's bar
+      const localDate = new Date(executedAt);
+      const year = localDate.getFullYear();
+      const month = localDate.getMonth();
+      const date = localDate.getDate();
+      
+      // Create day key using local date (YYYY-MM-DD format)
+      // This ensures each calendar day gets its own unique key
+      const dayKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(date).padStart(2, '0')}`;
       periodKey = dayKey;
-      const dayStart = new Date(Date.UTC(executedAt.getUTCFullYear(), executedAt.getUTCMonth(), executedAt.getUTCDate(), 0, 0, 0, 0));
+      
+      // Create timestamp for start of day in local timezone, then convert to ISO
+      // This ensures proper sorting and prevents day boundary issues
+      const dayStart = new Date(year, month, date, 0, 0, 0, 0);
       periodTimestamp = dayStart.toISOString();
+      
+      // Debug: Log day grouping to help diagnose issues
+      if (process.env.NODE_ENV === "development") {
+        console.log(`[PnL API] Grouping trade: ${executedAt.toISOString()} -> Day: ${dayKey}, PnL: ${trade.pnl}`);
+      }
     }
       
     const existing = periodMap.get(periodKey) || { pnl: 0, fees: 0, timestamp: periodTimestamp };
@@ -346,7 +364,9 @@ function calculatePnLFromTrades(trades: any[], startDate: Date | null, groupBy: 
   );
 
   for (const [periodKey, totals] of sortedPeriods) {
-    // Net PnL = Realized PnL from trades - fees
+    // Net PnL = Realized PnL from trades - fees for THIS PERIOD ONLY
+    // Each period (day/week/month) should only include trades that closed in that specific period
+    // IMPORTANT: Each day is completely isolated - Saturday's trades only affect Saturday's bar
     const netPnl = totals.pnl - totals.fees;
     cumulativePnl += netPnl;
 
@@ -360,9 +380,14 @@ function calculatePnLFromTrades(trades: any[], startDate: Date | null, groupBy: 
       }
     }
 
+    // Debug: Log period data to help diagnose issues
+    if (process.env.NODE_ENV === "development" && groupBy === "day") {
+      console.log(`[PnL API] Period: ${displayLabel}, PnL: ${totals.pnl}, Fees: ${totals.fees}, Net: ${netPnl}`);
+    }
+
     periodData.push({
       timestamp: totals.timestamp,
-      daily_pnl: netPnl, // Period profit/loss (net of fees)
+      daily_pnl: netPnl, // Period profit/loss (net of fees) - ONLY for this specific period/day
       cumulative_pnl: cumulativePnl, // Running total of profit/loss
       label: displayLabel, // Add label for display (M, T, W, W1, W2, Jan-Feb, etc.)
     });

@@ -147,9 +147,9 @@ export function useHistoryState() {
 
   const winsAndLosses = useMemo(() => {
     // Filter trades that have valid PnL (not null/undefined)
-    // Only count trades with actual PnL values (>= 0 for wins, < 0 for losses)
+    // Only count trades with PnL > 0 as wins (exclude break-even trades with PnL = 0)
     const tradesWithPnl = filteredTrades.filter(t => t.pnl != null && !isNaN(t.pnl));
-    const wins = tradesWithPnl.filter(t => t.pnl! >= 0).sort((a, b) => {
+    const wins = tradesWithPnl.filter(t => t.pnl! > 0).sort((a, b) => {
       // Sort by timestamp descending (newest first)
       return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
     });
@@ -169,6 +169,7 @@ export function useHistoryState() {
       return total / arr.length;
     };
     
+    // Only count wins + losses (exclude break-even trades with PnL = 0)
     const total = wins.length + losses.length;
     
     return {
@@ -200,10 +201,12 @@ export function useHistoryState() {
 
   const aggregate = useMemo(() => {
     // Filter out trades without valid PnL for win rate calculation
+    // Only count trades with PnL > 0 as wins (exclude break-even trades with PnL = 0)
     const tradesWithPnl = trades.filter(t => t.pnl != null && !isNaN(t.pnl));
-    const totalTrades = tradesWithPnl.length;
-    const winners = tradesWithPnl.filter(t => t.pnl! >= 0).length;
-    const losers = totalTrades - winners;
+    const winners = tradesWithPnl.filter(t => t.pnl! > 0).length;
+    const losers = tradesWithPnl.filter(t => t.pnl! < 0).length;
+    // Only count wins + losses (exclude break-even trades)
+    const totalTrades = winners + losers;
     const winRate = totalTrades > 0 ? Math.round((winners / totalTrades) * 100) : 0;
     
     // Calculate net PnL from all trades (including those without explicit PnL if any)
@@ -343,7 +346,8 @@ export function useHistoryState() {
       wins: wins.length,
       losses: losses.length,
       buyPct: total > 0 ? Math.round((buys.length / total) * 100) : 0,
-      winPct: tradesWithPnl.length > 0 ? Math.round((wins.length / tradesWithPnl.length) * 100) : 0,
+      // Win rate: wins / (wins + losses), excluding break-even trades (PnL = 0)
+      winPct: (wins.length + losses.length) > 0 ? Math.round((wins.length / (wins.length + losses.length)) * 100) : 0,
       totalVolume,
       avgSize,
       avgPnl,
@@ -369,16 +373,27 @@ export function useHistoryState() {
       const rec: PairAgg =
         map[t.symbol] || { symbol: t.symbol, trades: 0, wins: 0, losses: 0, winRate: 0, volume: 0, netPnl: 0, avgPnl: 0 };
       rec.trades += 1;
-      if (t.pnl >= 0) rec.wins += 1;
-      else rec.losses += 1;
-      rec.volume += t.size * t.price;
-      rec.netPnl += t.pnl;
+      
+      // Only count wins/losses for trades with valid PnL
+      // Only count PnL > 0 as wins (exclude break-even trades with PnL = 0)
+      if (t.pnl != null && !isNaN(t.pnl)) {
+        if (t.pnl > 0) rec.wins += 1;
+        else if (t.pnl < 0) rec.losses += 1;
+        // Include all PnL (including 0) in netPnl calculation
+        rec.netPnl += t.pnl;
+      }
+      
+      // Calculate volume (size * price)
+      const size = t.size != null && !isNaN(t.size) ? t.size : 0;
+      const price = t.price != null && !isNaN(t.price) ? t.price : 0;
+      rec.volume += size * price;
+      
       map[t.symbol] = rec;
     }
     const arr = Object.values(map).map(r => ({
       ...r,
-      winRate: r.trades ? Math.round((r.wins / r.trades) * 100) : 0,
-      avgPnl: r.trades ? r.netPnl / r.trades : 0,
+      winRate: r.trades > 0 ? Math.round((r.wins / r.trades) * 100) : 0,
+      avgPnl: r.trades > 0 ? r.netPnl / r.trades : 0,
     }));
     const topWinners = [...arr].sort((a, b) => b.winRate - a.winRate).slice(0, 5);
     const mostTraded = [...arr].sort((a, b) => b.trades - a.trades).slice(0, 5);

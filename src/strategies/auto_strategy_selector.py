@@ -35,7 +35,10 @@ class AutoStrategySelector(StrategyInterface):
         self.selected_strategy: Optional[StrategyInterface] = None
         self.selection_timestamp: Optional[datetime] = None
         self.selection_reasoning: str = ""
-        self.cache_duration_minutes = 20  # Cache strategy selection for 20 minutes
+        self.last_strategy_name: Optional[str] = None
+        # Dynamic re-evaluation: Check every cycle, but only switch if market conditions changed significantly
+        self.cache_duration_minutes = CONFIG.get("auto_strategy_cache_minutes", 0)  # 0 = re-evaluate every cycle
+        self.min_change_threshold = 0.3  # Only switch if market conditions changed by 30%+
         
         # Fallback to default strategy (lazy import to avoid circular dependency)
         self.default_strategy = None
@@ -50,22 +53,89 @@ class AutoStrategySelector(StrategyInterface):
         Returns:
             Dictionary with 'reasoning' and 'trade_decisions' keys
         """
-        # Check if we need to re-select strategy
+        # Parse context if it's a string
+        if isinstance(context, str):
+            try:
+                context = json.loads(context)
+            except (json.JSONDecodeError, TypeError):
+                context = {}
+        
+        # Check if we need to re-select strategy (re-evaluates every cycle if cache_duration = 0)
+        old_strategy_name = self.last_strategy_name
         strategy = self._get_or_select_strategy(assets, context)
+        new_strategy_name = strategy.get_name()
+        
+        # Extract clean strategy name for comparison (remove "AutoSelector" wrapper)
+        clean_new_name = new_strategy_name
+        if "(" in new_strategy_name and ")" in new_strategy_name:
+            # Extract name from "AutoSelector(ScalpingStrategy)" format
+            clean_new_name = new_strategy_name.split("(")[1].split(")")[0]
+        elif "AutoSelector" in new_strategy_name:
+            clean_new_name = new_strategy_name.replace("AutoSelector", "").strip("()")
+        
+        clean_old_name = old_strategy_name
+        if old_strategy_name and "(" in old_strategy_name and ")" in old_strategy_name:
+            clean_old_name = old_strategy_name.split("(")[1].split(")")[0]
+        elif old_strategy_name and "AutoSelector" in old_strategy_name:
+            clean_old_name = old_strategy_name.replace("AutoSelector", "").strip("()")
+        
+        # Check if strategy changed (compare clean names)
+        strategy_changed = clean_old_name and clean_old_name != clean_new_name
+        
+        # If strategy changed, add instructions to handle existing positions
+        if strategy_changed:
+            # Get active positions from context
+            position_status = context.get("position_status", {})
+            active_trades = position_status.get("active_trades", [])
+            
+            if active_trades:
+                self.logger.warning(f"🔄 Strategy switched from '{old_strategy_name}' to '{new_strategy_name}'")
+                self.logger.warning(f"   Active positions: {len(active_trades)}")
+                self.logger.warning(f"   New strategy will manage these positions with its own TP/SL rules")
+                
+                # Add note to context about strategy change for the new strategy
+                if isinstance(context, dict):
+                    context["_strategy_just_changed"] = True
+                    context["_previous_strategy"] = old_strategy_name
+                    context["_new_strategy"] = new_strategy_name
         
         # Delegate to selected strategy
         result = strategy.decide_trade(assets, context)
         
-        # Add auto selection info to reasoning (only on first selection or when strategy changes)
-        if self.selection_reasoning and (not hasattr(self, '_last_reasoning') or self._last_reasoning != self.selection_reasoning):
-            result["reasoning"] = f"🤖 [Auto Mode] Selected Strategy: {strategy.get_name()}\n📝 Selection Reasoning: {self.selection_reasoning}\n\n{result.get('reasoning', '')}"
-            self._last_reasoning = self.selection_reasoning
+        # Add auto selection info to reasoning (always show current strategy)
+        strategy_info = f"🤖 [Auto Mode] Current Strategy: {new_strategy_name}"
+        if strategy_changed:
+            strategy_info += f" (switched from {old_strategy_name})"
+        if self.selection_reasoning:
+            strategy_info += f"\n📝 Reasoning: {self.selection_reasoning}"
+        
+        # Prepend strategy info to reasoning
+        existing_reasoning = result.get('reasoning', '')
+        result["reasoning"] = f"{strategy_info}\n\n{existing_reasoning}"
         
         return result
     
     def _get_or_select_strategy(self, assets: List[str], context: Dict[str, Any]) -> StrategyInterface:
-        """Get cached strategy or select new one if cache expired."""
-        # Check if cache is still valid
+        """Get cached strategy or select new one if cache expired or market conditions changed."""
+        # Always re-evaluate if cache duration is 0 (dynamic mode)
+        if self.cache_duration_minutes == 0:
+            # Re-evaluate strategy on every cycle
+            strategy = self._select_strategy(assets, context)
+            new_strategy_name = strategy.get_name()
+            
+            # Check if strategy changed
+            if self.last_strategy_name and self.last_strategy_name != new_strategy_name:
+                self.logger.warning(f"🔄 STRATEGY SWITCH: Changed from '{self.last_strategy_name}' to '{new_strategy_name}'")
+                self.logger.warning(f"   Reasoning: {self.selection_reasoning}")
+                self.logger.warning(f"   ⚠️  Existing positions may need adjustment - new strategy will handle exits accordingly")
+            
+            # Update cache
+            self.selected_strategy = strategy
+            self.selection_timestamp = datetime.now(timezone.utc)
+            self.last_strategy_name = new_strategy_name
+            return strategy
+        
+        # Cached mode: Check if cache is still valid
         if (self.selected_strategy is not None and 
             self.selection_timestamp is not None and
             datetime.now(timezone.utc) - self.selection_timestamp < timedelta(minutes=self.cache_duration_minutes)):
@@ -76,14 +146,22 @@ class AutoStrategySelector(StrategyInterface):
             self._last_logged_strategy = self.selected_strategy.get_name()
             return self.selected_strategy
         
-        # Need to select new strategy
-        self.logger.info("🔄 Strategy cache expired or missing, analyzing market conditions to select best strategy...")
+        # Need to select new strategy (cache expired)
+        self.logger.info("🔄 Strategy cache expired, analyzing market conditions to select best strategy...")
         strategy = self._select_strategy(assets, context)
+        new_strategy_name = strategy.get_name()
+        
+        # Check if strategy changed
+        if self.last_strategy_name and self.last_strategy_name != new_strategy_name:
+            self.logger.warning(f"🔄 STRATEGY SWITCH: Changed from '{self.last_strategy_name}' to '{new_strategy_name}'")
+            self.logger.warning(f"   Reasoning: {self.selection_reasoning}")
+            self.logger.warning(f"   ⚠️  Existing positions may need adjustment - new strategy will handle exits accordingly")
         
         # Cache the selection
         self.selected_strategy = strategy
         self.selection_timestamp = datetime.now(timezone.utc)
-        self._last_logged_strategy = strategy.get_name()
+        self.last_strategy_name = new_strategy_name
+        self._last_logged_strategy = new_strategy_name
         
         return strategy
     
@@ -190,20 +268,28 @@ class AutoStrategySelector(StrategyInterface):
                 "the best trading strategy from the available options.\n\n"
                 "Available strategies:\n"
                 "1. 'scalping' - 5-minute scalping strategy with EMA crossovers, RSI filters, and volume surge detection. "
-                "   Best for: High volatility, ranging markets, quick entries/exits\n"
+                "   - TP: 5% fixed (close immediately at 5% profit)\n"
+                "   - Best for: High volatility, ranging/choppy markets, quick entries/exits, when market is sideways\n"
+                "   - Use when: Market is ranging, no clear trend, high volatility, quick profit opportunities\n"
                 "2. 'llm_trend' (or 'default') - LLM-based trend-following strategy with multi-timeframe analysis. "
-                "   Best for: Trending markets, strong directional moves, when you need adaptive analysis\n\n"
-                "Analyze the provided market conditions and recommend ONE strategy.\n\n"
+                "   - TP: Indicator-based (8-15% typical, exits based on RSI/MACD/EMA signals)\n"
+                "   - Best for: Trending markets, strong directional moves, when clear trend exists\n"
+                "   - Use when: Market is trending strongly, clear direction, lower volatility with momentum\n\n"
+                "CRITICAL: Analyze market conditions CAREFULLY and switch strategies when market regime changes:\n"
+                "- If market was trending but now ranging → Switch to scalping\n"
+                "- If market was ranging but now trending → Switch to llm_trend\n"
+                "- Consider current positions: If switching strategies, existing positions will be managed by new strategy\n\n"
                 "Return ONLY a JSON object with this exact format:\n"
                 "{\n"
                 '  "recommended_strategy": "scalping" or "llm_trend",\n'
-                '  "reasoning": "Brief explanation of why this strategy is best for current conditions"\n'
+                '  "reasoning": "Brief explanation of why this strategy is best for current conditions and if market regime changed"\n'
                 "}\n\n"
                 "Consider:\n"
-                "- Volatility: High volatility favors scalping\n"
-                "- Trend strength: Strong trends favor llm_trend\n"
-                "- Market regime: Ranging markets favor scalping, trending markets favor llm_trend\n"
-                "- Timeframe: 5m focus favors scalping, multi-timeframe favors llm_trend"
+                "- Volatility: High volatility + ranging = scalping, Low volatility + trending = llm_trend\n"
+                "- Trend strength: Strong clear trends = llm_trend, Weak/no trend = scalping\n"
+                "- Market regime: Ranging/choppy = scalping, Trending = llm_trend\n"
+                "- Price action: Sideways/consolidation = scalping, Directional moves = llm_trend\n"
+                "- RSI: Neutral RSI (40-60) with choppy price = scalping, RSI showing momentum = llm_trend"
             )
             
             user_prompt = json.dumps({
@@ -261,6 +347,12 @@ class AutoStrategySelector(StrategyInterface):
     def get_name(self) -> str:
         """Get the strategy name."""
         if self.selected_strategy:
-            return f"AutoSelector({self.selected_strategy.get_name()})"
+            # Return just the underlying strategy name for easier comparison
+            underlying_name = self.selected_strategy.get_name()
+            # Extract strategy name (remove "AutoSelector" wrapper if present)
+            if "(" in underlying_name and ")" in underlying_name:
+                # Already wrapped, return as is
+                return underlying_name
+            return underlying_name
         return "AutoSelector(selecting...)"
 

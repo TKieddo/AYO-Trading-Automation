@@ -2,11 +2,15 @@
 
 import asyncio
 import logging
+import hmac
+import hashlib
+import urllib.parse
 from typing import Optional, Dict, List, Any
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from src.config_loader import CONFIG
 import time
+import requests
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -23,6 +27,11 @@ class BinanceAPI:
         
         if not api_key or not api_secret:
             raise ValueError("BINANCE_API_KEY and BINANCE_API_SECRET must be set in .env")
+        
+        # Store API credentials for v3 endpoint calls
+        self.api_key = api_key
+        self.api_secret = api_secret
+        self.testnet = testnet
         
         # Initialize Binance Client with retries to tolerate transient 5xx errors from Binance
         # python-binance Client pings in constructor; wrap in retry/backoff
@@ -64,7 +73,6 @@ class BinanceAPI:
             elif len(final_err) > 200:
                 final_err = final_err[:200] + "..."
             raise RuntimeError(f"Failed to initialize Binance Client after {max_attempts} attempts: {final_err}")
-        self.testnet = testnet
         
         # Sync local timestamp offset with Binance server to avoid -1021 timestamp errors
         try:
@@ -462,15 +470,321 @@ class BinanceAPI:
             return [str(order_result['orderId'])]
         return []
 
+    async def _get_v3_position_risk(self, symbol: Optional[str] = None) -> List[Dict]:
+        """Get positions using /fapi/v3/positionRisk endpoint (returns positionInitialMargin).
+        
+        This endpoint provides positionInitialMargin which is more accurate than v2.
+        v3 returns both positions with open orders, while v2 only returns held positions.
+        
+        Args:
+            symbol: Optional symbol filter (e.g., 'BTCUSDT'). If provided, only returns positions for that symbol.
+        """
+        try:
+            def _make_request():
+                # Build query string with timestamp
+                timestamp = int(time.time() * 1000)
+                params = {'timestamp': timestamp, 'recvWindow': 60000}
+                
+                # Add symbol parameter if provided
+                if symbol:
+                    params['symbol'] = symbol
+                
+                query_string = urllib.parse.urlencode(params)
+                
+                # Create signature
+                signature = hmac.new(
+                    self.api_secret.encode('utf-8'),
+                    query_string.encode('utf-8'),
+                    hashlib.sha256
+                ).hexdigest()
+                
+                # Add signature to params
+                params['signature'] = signature
+                
+                # Build URL
+                base_url = 'https://testnet.binancefuture.com' if self.testnet else 'https://fapi.binance.com'
+                url = f"{base_url}/fapi/v3/positionRisk?{urllib.parse.urlencode(params)}"
+                
+                # Make request
+                response = requests.get(
+                    url,
+                    headers={'X-MBX-APIKEY': self.api_key},
+                    timeout=10
+                )
+                response.raise_for_status()
+                return response.json()
+            
+            # Run in thread pool to avoid blocking
+            return await asyncio.to_thread(_make_request)
+        except Exception as e:
+            logger.warning(f"Error fetching v3 positionRisk, falling back to v2: {e}")
+            # Fallback to v2 if v3 fails
+            if symbol:
+                return await self._retry(lambda: self.client.futures_position_information(symbol=symbol))
+            return await self._retry(lambda: self.client.futures_position_information())
+
+    async def get_position(self, symbol: str = 'BTCUSDT', asset: Optional[str] = None) -> Dict[str, Any]:
+        """Get position information for a specific symbol with calculated fields.
+        
+        This function gets information about both positions held and open orders.
+        Note: /fapi/v2/positionRisk only returns held positions, but /fapi/v3/positionRisk
+        returns both positions with open orders.
+        
+        Args:
+            symbol: Trading symbol (e.g., 'BTCUSDT', 'ETHUSDT'). Defaults to 'BTCUSDT'.
+                   If 'asset' parameter is provided, this will be ignored.
+            asset: Asset name (e.g., 'BTC', 'ETH'). If provided, will be converted to symbol format.
+            
+        Returns:
+            Dictionary containing position information with calculated fields (leverage, ROI, size),
+            or empty dict if no position found.
+            Includes:
+            - All fields from Binance API response
+            - Calculated leverage (from notional/positionInitialMargin)
+            - Calculated ROI percentage (unRealizedProfit/positionInitialMargin * 100)
+            - Size (positionAmt, absolute size)
+            - Open time (from trade history if available, otherwise updateTime)
+        """
+        try:
+            # Convert asset name to symbol if provided
+            if asset:
+                symbol = self._to_futures_symbol(asset)
+            
+            # Get positions using v3 endpoint (supports symbol filter)
+            positions = await self._get_v3_position_risk(symbol=symbol)
+            
+            # Filter by symbol (in case multiple positions returned)
+            pos = None
+            for p in positions:
+                if p.get('symbol') == symbol:
+                    pos = p
+                    break
+            
+            if not pos:
+                return {}
+            
+            # Extract and calculate fields
+            position_amt = float(pos.get('positionAmt', 0))
+            entry_price = float(pos.get('entryPrice', 0))
+            current_price = float(pos.get('markPrice', 0))
+            unrealized_pnl = float(pos.get('unRealizedProfit', 0))
+            
+            # Get notional value
+            notional = pos.get('notional')
+            if notional:
+                try:
+                    notional = float(notional)
+                except (ValueError, TypeError):
+                    notional = abs(position_amt) * current_price if current_price > 0 else 0.0
+            else:
+                notional = abs(position_amt) * current_price if current_price > 0 else 0.0
+            
+            # Get positionInitialMargin (most accurate)
+            position_initial_margin = pos.get('positionInitialMargin') or pos.get('initialMargin')
+            if position_initial_margin:
+                try:
+                    position_initial_margin = float(position_initial_margin)
+                except (ValueError, TypeError):
+                    position_initial_margin = 0.0
+            else:
+                position_initial_margin = 0.0
+            
+            # Calculate leverage: leverage = abs(notional) / positionInitialMargin
+            calculated_leverage = None
+            if position_initial_margin and position_initial_margin > 0:
+                calculated_leverage = abs(notional) / position_initial_margin
+            
+            # Try to get leverage from API (v2 might have it)
+            api_leverage = pos.get('leverage')
+            if api_leverage:
+                try:
+                    api_leverage = float(api_leverage)
+                except (ValueError, TypeError):
+                    api_leverage = None
+            
+            # Use calculated leverage if API doesn't provide it
+            leverage = api_leverage if api_leverage else calculated_leverage
+            
+            # Calculate ROI: ROI (%) = (unRealizedProfit / positionInitialMargin) * 100
+            roi_percent = 0.0
+            if position_initial_margin and position_initial_margin > 0:
+                roi_percent = (unrealized_pnl / position_initial_margin) * 100
+            
+            # Get update time
+            update_time = pos.get('updateTime')
+            if update_time:
+                try:
+                    update_time = int(update_time)
+                except (ValueError, TypeError):
+                    update_time = None
+            else:
+                update_time = None
+            
+            # Try to get actual open time from trade history
+            opened_at = await self._get_position_open_time(symbol, position_amt)
+            if not opened_at:
+                opened_at = update_time  # Fallback to updateTime
+            
+            # Enrich position with calculated fields
+            enriched_pos = dict(pos)  # Copy original response
+            enriched_pos.update({
+                'leverage': leverage,  # Calculated or from API
+                'calculatedLeverage': calculated_leverage,  # Calculated value
+                'roi': roi_percent,  # ROI percentage
+                'roiPercent': roi_percent,  # Frontend format
+                'size': abs(position_amt),  # Absolute size
+                'quantity': abs(position_amt),  # Alias
+                'notional': notional,  # Notional value
+                'positionInitialMargin': position_initial_margin,  # Initial margin
+                'openedAt': opened_at,  # Actual open time (from trade history or updateTime)
+                'openTime': opened_at,  # Alternative format
+                'updateTime': update_time,  # Last update time
+            })
+            
+            return enriched_pos
+        except Exception as e:
+            logger.error(f"Error getting position for {symbol}: {e}")
+            return {}
+    
+    async def _get_position_open_time(self, symbol: str, position_amt: float) -> Optional[int]:
+        """Get the actual open time for a position from trade history.
+        
+        Args:
+            symbol: Trading symbol (e.g., 'BTCUSDT')
+            position_amt: Current position amount (positive for long, negative for short)
+            
+        Returns:
+            Timestamp in milliseconds of when position was opened, or None if not found.
+        """
+        try:
+            # Get recent trades for this symbol
+            trades = await self._retry(lambda: self.client.futures_account_trades(symbol=symbol, limit=100))
+            
+            if not trades or not isinstance(trades, list):
+                return None
+            
+            # Determine position side
+            is_long = position_amt > 0
+            
+            # Find the first trade that opened this position
+            # For long positions, look for BUY trades
+            # For short positions, look for SELL trades
+            # Sort by time ascending to find the earliest trade
+            relevant_trades = []
+            for trade in trades:
+                trade_side = trade.get('side', '').upper()
+                if (is_long and trade_side == 'BUY') or (not is_long and trade_side == 'SELL'):
+                    relevant_trades.append(trade)
+            
+            if not relevant_trades:
+                return None
+            
+            # Sort by time (ascending) to get the earliest trade
+            relevant_trades.sort(key=lambda t: int(t.get('time', 0)))
+            
+            # Return the timestamp of the first trade
+            first_trade_time = relevant_trades[0].get('time')
+            if first_trade_time:
+                try:
+                    return int(first_trade_time)
+                except (ValueError, TypeError):
+                    return None
+            
+            return None
+        except Exception as e:
+            logger.debug(f"Could not get open time from trade history for {symbol}: {e}")
+            return None
+
     async def get_user_state(self) -> Dict[str, Any]:
         """Get account balance and positions."""
         try:
             account = await self._retry(lambda: self.client.futures_account())
-            positions = await self._retry(lambda: self.client.futures_position_information())
+            # Use v3 endpoint to get positionInitialMargin directly
+            positions = await self._get_v3_position_risk()
             
             # Extract relevant data
             balance = float(account.get('totalWalletBalance', 0))
             total_value = float(account.get('totalMarginBalance', 0))
+            
+            # Get all asset balances using the balance endpoint (more reliable for getting all assets)
+            # This endpoint returns ALL assets (USDT, USDC, BTC, etc.) that have balances
+            # According to Binance docs: GET /fapi/v2/balance or /fapi/v3/balance
+            asset_balances = []
+            try:
+                # Use futures_account_balance() which calls /fapi/v2/balance or /fapi/v3/balance endpoint
+                # This returns all asset balances including USDT, USDC, BTC, etc.
+                # Response format: [{"asset": "USDT", "balance": "...", "crossWalletBalance": "...", ...}, ...]
+                # Check if method exists (should exist in python-binance)
+                if not hasattr(self.client, 'futures_account_balance'):
+                    logger.warning("futures_account_balance() method not found on client, trying alternative approach")
+                    raise AttributeError("futures_account_balance method not available")
+                
+                balances_response = await self._retry(lambda: self.client.futures_account_balance())
+                
+                logger.debug(f"Binance balances response type: {type(balances_response)}, length: {len(balances_response) if isinstance(balances_response, list) else 'N/A'}")
+                
+                if isinstance(balances_response, list):
+                    for balance_data in balances_response:
+                        asset_name = balance_data.get('asset', '')
+                        if not asset_name:
+                            continue
+                            
+                        # Get balance values - handle both string and numeric formats
+                        # According to Binance docs, values are returned as strings
+                        balance_str = balance_data.get('balance', '0')
+                        available_balance_str = balance_data.get('availableBalance', '0')
+                        cross_wallet_balance_str = balance_data.get('crossWalletBalance', '0')
+                        cross_unrealized_pnl_str = balance_data.get('crossUnPnl', '0')
+                        
+                        wallet_balance = float(balance_str) if balance_str else 0.0
+                        available_balance = float(available_balance_str) if available_balance_str else 0.0
+                        cross_wallet_balance = float(cross_wallet_balance_str) if cross_wallet_balance_str else 0.0
+                        cross_unrealized_pnl = float(cross_unrealized_pnl_str) if cross_unrealized_pnl_str else 0.0
+                        
+                        # Include all assets with non-zero balance (USDT, USDC, BTC, etc.)
+                        # Use a small threshold (0.00000001) to avoid floating point precision issues
+                        if abs(wallet_balance) > 1e-8 or abs(cross_wallet_balance) > 1e-8:
+                            asset_balances.append({
+                                'asset': asset_name,
+                                'walletBalance': wallet_balance,
+                                'availableBalance': available_balance,
+                                'crossWalletBalance': cross_wallet_balance,
+                                'crossUnPnl': cross_unrealized_pnl,
+                                'positionValue': cross_wallet_balance,  # For compatibility with frontend
+                            })
+                            logger.debug(f"Added asset balance: {asset_name} - wallet: {wallet_balance}, cross: {cross_wallet_balance}")
+                
+                logger.info(f"Fetched {len(asset_balances)} asset balances from Binance: {[b['asset'] for b in asset_balances]}")
+                
+            except Exception as e:
+                logger.error(f"Failed to fetch asset balances from balance endpoint: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                
+                # Fallback to account endpoint if balance endpoint fails
+                logger.info("Falling back to account endpoint for asset balances...")
+                if 'assets' in account and isinstance(account['assets'], list):
+                    for asset_data in account['assets']:
+                        asset_name = asset_data.get('asset', '')
+                        if not asset_name:
+                            continue
+                            
+                        wallet_balance = float(asset_data.get('walletBalance', 0) or 0)
+                        available_balance = float(asset_data.get('availableBalance', 0) or 0)
+                        cross_wallet_balance = float(asset_data.get('crossWalletBalance', 0) or 0)
+                        cross_unrealized_pnl = float(asset_data.get('crossUnPnl', 0) or 0)
+                        
+                        # Only include assets with non-zero balance
+                        if abs(wallet_balance) > 1e-8 or abs(cross_wallet_balance) > 1e-8:
+                            asset_balances.append({
+                                'asset': asset_name,
+                                'walletBalance': wallet_balance,
+                                'availableBalance': available_balance,
+                                'crossWalletBalance': cross_wallet_balance,
+                                'crossUnPnl': cross_unrealized_pnl,
+                                'positionValue': cross_wallet_balance,  # For compatibility with frontend
+                            })
+                    logger.info(f"Fetched {len(asset_balances)} asset balances from account endpoint: {[b['asset'] for b in asset_balances]}")
             
             # Format positions
             enriched_positions = []
@@ -482,32 +796,109 @@ class BinanceAPI:
                     unrealized_pnl = float(pos.get('unRealizedProfit', 0))
                     liquidation_price = float(pos.get('liquidationPrice', 0)) if pos.get('liquidationPrice') else None
                     
-                    asset = self._from_futures_symbol(pos.get('symbol', ''))
+                    # Get notional value from API (most accurate)
+                    notional = pos.get('notional')
+                    if notional:
+                        try:
+                            notional = float(notional)
+                        except (ValueError, TypeError):
+                            # Calculate notional: notional = abs(positionAmt) * markPrice
+                            notional = abs(position_amt) * current_price if current_price > 0 else 0.0
+                    else:
+                        # Calculate notional: notional = abs(positionAmt) * markPrice
+                        notional = abs(position_amt) * current_price if current_price > 0 else 0.0
+                    
+                    # Get actual initial margin from Binance v3 positionRisk endpoint
+                    # v3 endpoint provides positionInitialMargin directly (most accurate)
+                    # IMPORTANT: Do NOT use isolatedMargin as fallback - it's the CURRENT margin, not INITIAL margin
+                    # isolatedMargin can change due to funding fees, making ROI calculations incorrect
+                    position_initial_margin = pos.get('positionInitialMargin') or pos.get('initialMargin')
+                    if position_initial_margin:
+                        try:
+                            position_initial_margin = float(position_initial_margin)
+                        except (ValueError, TypeError):
+                            position_initial_margin = 0.0
+                    else:
+                        # Fallback: calculate from notional value and leverage
+                        # For Binance USDT-M futures: notional = abs(positionAmt) * markPrice
+                        # initialMargin = abs(notional) / leverage
+                        position_initial_margin = 0.0
+                    
+                    # Calculate leverage: leverage = abs(notional) / positionInitialMargin
+                    # According to Binance docs: leverage is not directly in v3 response, calculate it
+                    actual_leverage = None
+                    if position_initial_margin and position_initial_margin > 0:
+                        actual_leverage = abs(notional) / position_initial_margin
+                    else:
+                        # Try to get leverage from position data (v2 might have it)
+                        leverage_from_pos = pos.get('leverage')
+                        if leverage_from_pos:
+                            try:
+                                actual_leverage = float(leverage_from_pos)
+                            except (ValueError, TypeError):
+                                actual_leverage = None
+                    
+                    # Calculate ROI (Return on Investment): ROI (%) = (unRealizedProfit / positionInitialMargin) * 100
+                    roi_percent = 0.0
+                    if position_initial_margin and position_initial_margin > 0:
+                        roi_percent = (unrealized_pnl / position_initial_margin) * 100
+                    
+                    # Get update time (last update timestamp)
+                    update_time = pos.get('updateTime')
+                    if update_time:
+                        try:
+                            update_time = int(update_time)
+                        except (ValueError, TypeError):
+                            update_time = None
+                    else:
+                        update_time = None
+                    
+                    # Try to get actual open time from trade history
+                    symbol_for_trades = pos.get('symbol', '')
+                    opened_at = await self._get_position_open_time(symbol_for_trades, position_amt)
+                    if not opened_at:
+                        opened_at = update_time  # Fallback to updateTime
+                    
+                    asset = self._from_futures_symbol(symbol_for_trades)
                     enriched_positions.append({
                         'coin': asset,
                         'symbol': asset,  # Add both for compatibility
-                        'szi': position_amt,  # Positive = long, negative = short
+                        'szi': position_amt,  # Positive = long, negative = short (SIZE)
+                        'size': abs(position_amt),  # Absolute size for display
                         'quantity': abs(position_amt),  # Absolute size
                         'positionAmt': position_amt,  # Original signed value
                         'entryPx': entry_price,
                         'entryPrice': entry_price,  # Add both formats
                         'pnl': unrealized_pnl,
                         'unrealized_pnl': unrealized_pnl,  # Add both formats
+                        'unrealizedPnl': unrealized_pnl,  # Frontend format
+                        'roi': roi_percent,  # ROI percentage
+                        'roiPercent': roi_percent,  # Frontend format
                         'current_price': current_price,
+                        'currentPrice': current_price,  # Frontend format
                         'markPrice': current_price,  # Add both formats
                         'liquidation_price': liquidation_price,
                         'liquidationPrice': liquidation_price,  # Add both formats
-                        'liquidationPx': liquidation_price  # Hyperliquid format
+                        'liquidationPx': liquidation_price,  # Hyperliquid format
+                        'leverage': actual_leverage,  # Calculated or from API
+                        'positionInitialMargin': position_initial_margin,  # Actual margin used
+                        'initialMargin': position_initial_margin,  # Alias for compatibility
+                        'notional': notional,  # Notional value
+                        'updateTime': update_time,  # Last update timestamp (ms)
+                        'openedAt': opened_at,  # Actual open time (from trade history or updateTime)
+                        'openTime': opened_at,  # Alternative format
+                        'update_time': update_time  # Alternative format
                     })
             
             return {
                 'balance': balance,
                 'total_value': total_value,
-                'positions': enriched_positions
+                'positions': enriched_positions,
+                'asset_balances': asset_balances  # Include all asset balances
             }
         except Exception as e:
             logger.error(f"Error getting user state: {e}")
-            return {'balance': 0, 'total_value': 0, 'positions': []}
+            return {'balance': 0, 'total_value': 0, 'positions': [], 'asset_balances': []}
 
     async def get_current_price(self, asset: str) -> float:
         """Get current mark price for an asset."""
@@ -541,22 +932,39 @@ class BinanceAPI:
             return []
 
     async def get_recent_fills(self, limit: int = 50) -> List[Dict]:
-        """Get recent trade history."""
+        """Get recent trade history with all fields from Binance API."""
         try:
             trades = await self._retry(lambda: self.client.futures_account_trades())
             formatted_trades = []
             for t in trades[-limit:]:
                 asset = self._from_futures_symbol(t.get('symbol', ''))
+                # Preserve all fields from Binance API response
                 formatted_trades.append({
+                    # Original Binance fields
+                    'id': t.get('id'),
+                    'tradeId': t.get('id'),
+                    'symbol': t.get('symbol', ''),
                     'coin': asset,
                     'asset': asset,
+                    'side': t.get('side', ''),
                     'isBuy': t.get('side') == 'BUY',
+                    'positionSide': t.get('positionSide', ''),
+                    'price': float(t.get('price', 0)),
+                    'px': float(t.get('price', 0)),
+                    'qty': float(t.get('qty', 0)),
                     'sz': float(t.get('qty', 0)),
                     'size': float(t.get('qty', 0)),
-                    'px': float(t.get('price', 0)),
-                    'price': float(t.get('price', 0)),
+                    'quoteQty': float(t.get('quoteQty', 0)),
                     'time': t.get('time', 0),
-                    'timestamp': t.get('time', 0)
+                    'timestamp': t.get('time', 0),
+                    'orderId': t.get('orderId'),
+                    'maker': t.get('maker', False),
+                    'buyer': t.get('buyer', False),
+                    'realizedPnl': float(t.get('realizedPnl', 0)) if t.get('realizedPnl') is not None else None,
+                    'realized_pnl': float(t.get('realizedPnl', 0)) if t.get('realizedPnl') is not None else None,
+                    'commission': float(t.get('commission', 0)) if t.get('commission') else 0,
+                    'fee': float(t.get('commission', 0)) if t.get('commission') else 0,
+                    'commissionAsset': t.get('commissionAsset', 'USDT'),
                 })
             return formatted_trades
         except Exception as e:

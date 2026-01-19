@@ -15,8 +15,23 @@ class ScalpingStrategy(StrategyInterface):
     - 5-minute timeframe execution
     - Entry: EMA5 crossover + RSI filter + volume surge
     - Fixed risk per trade
-    - TP: 1.5%, SL: 0.5%
-    - Trailing stop: TP/2
+    - TP: 5.0% (close immediately at 5%), SL: 3%
+    - Quick in, quick out - take profits fast
+    
+    🎯 SCALPING EXIT STRATEGY:
+    - Take profit target: 5% (configurable via SCALPING_TP_PERCENT)
+    - Close immediately when 5% profit is reached
+    - System will auto-close at 5% if not closed manually
+    - Don't wait for higher profits - scalping is about quick wins
+    
+    🚨 AUTOMATIC POSITION MANAGEMENT (System-Enforced):
+    The system automatically handles:
+    - Auto-close at 5% profit (scalping target)
+    - Maximum hold time (auto-closes after 24 hours)
+    - Drawdown protection (auto-closes if profit drops 5%+ from peak)
+    - Loss protection (auto-closes if down 5%+ for 1+ hours)
+    
+    This strategy focuses on entry signals only - exits are handled automatically at 5%.
     """
     
     def __init__(self):
@@ -96,9 +111,13 @@ class ScalpingStrategy(StrategyInterface):
         
         for asset in assets:
             try:
-                # If we have a position, hold (let TP/SL handle exits)
+                # If we have a position, hold (let TP/SL and automatic protections handle exits)
                 if asset in assets_with_positions:
-                    decision = self._create_hold_decision(asset, "Position active, TP/SL will handle exit")
+                    decision = self._create_hold_decision(
+                        asset, 
+                        "Position active. System automatically handles: TP/SL, trailing stops (after 5% profit), "
+                        "24h max hold time, and drawdown protection (5% from peak)."
+                    )
                 else:
                     decision = self._check_entry_conditions(
                         asset, 
@@ -271,9 +290,10 @@ class ScalpingStrategy(StrategyInterface):
         trail_percent = self.tp_percent / 2
         
         exit_plan = (
-            f"TP: {tp_price:.2f} (+{self.tp_percent*100:.1f}%), "
-            f"SL: {sl_price:.2f} (-{self.sl_percent*100:.1f}%), "
-            f"Trailing stop: {trail_percent*100:.2f}%"
+            f"SCALPING: TP: {tp_price:.2f} (+{self.tp_percent*100:.1f}%), "
+            f"SL: {sl_price:.2f} (-{self.sl_percent*100:.1f}%). "
+            f"🎯 Close immediately at 5% profit. "
+            f"System will auto-close at 5% if not closed manually."
         )
         
         rationale = (
@@ -315,13 +335,11 @@ class ScalpingStrategy(StrategyInterface):
             allocation_usd = position_size_notional_usd
             self.logger.info(f"{asset} Short: Using Pine Script position size ${allocation_usd:.2f} (risk: ${self.risk_per_trade:.2f}, SL: {self.sl_percent*100:.1f}%)")
         
-        # Trailing stop: TP/2
-        trail_percent = self.tp_percent / 2
-        
         exit_plan = (
-            f"TP: {tp_price:.2f} (-{self.tp_percent*100:.1f}%), "
-            f"SL: {sl_price:.2f} (+{self.sl_percent*100:.1f}%), "
-            f"Trailing stop: {trail_percent*100:.2f}%"
+            f"SCALPING: TP: {tp_price:.2f} (-{self.tp_percent*100:.1f}%), "
+            f"SL: {sl_price:.2f} (+{self.sl_percent*100:.1f}%). "
+            f"🎯 Close immediately at {self.tp_percent*100:.1f}% profit. "
+            f"System will auto-close at {self.tp_percent*100:.1f}% if not closed manually."
         )
         
         rationale = (
