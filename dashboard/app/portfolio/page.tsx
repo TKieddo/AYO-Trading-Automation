@@ -444,6 +444,10 @@ const demoTransactions: Transaction[] = [
   { id: "3", title: "Aster", subtitle: "Trade", avatarUrl: "https://images.unsplash.com/photo-1621416894569-0f39d0c3f3a1?w=80&q=80&auto=format&fit=crop", amount: 5710.2 },
 ];
 
+// Force dynamic rendering - this page needs real-time data
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export default async function PortfolioPage() {
   const { assets, balances, accountValue, balanceHistory, exchange, trades, priceMap } = await fetchPortfolioData();
   
