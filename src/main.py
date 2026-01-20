@@ -1381,45 +1381,13 @@ def main():
                                 add_event(f"⏸️  BLOCKED ADDING TO POSITION for {asset}: Already have {'long' if existing_is_long else 'short'} position. Only close/flip when exit conditions are met. Holding existing position.")
                                 continue  # Skip this trade - hold the existing position
                             
-                            # If closing/flipping, allow immediately when AI decides based on exit conditions
-                            # Only block if position is truly premature (less than 1 minute) and no exit conditions met
+                            # If closing/flipping, execute immediately when AI decides - no premature checks
                             if is_closing:
-                                time_since_entry = None
-                                if opened_at_str:
-                                    try:
-                                        # Parse ISO format datetime
-                                        if 'T' in opened_at_str:
-                                            opened_at = datetime.fromisoformat(opened_at_str.replace('Z', '+00:00'))
-                                        else:
-                                            opened_at = datetime.fromisoformat(opened_at_str)
-                                        time_since_entry = (datetime.now(timezone.utc) - opened_at).total_seconds() / 60  # minutes
-                                    except Exception as e:
-                                        logging.warning(f"Could not parse opened_at for {asset}: {e}. Allowing trade to proceed.")
-                                
-                                # Calculate price movement
+                                # Calculate price movement for logging
                                 price_move_pct = abs((current_price - entry_price) / entry_price * 100) if entry_price and entry_price > 0 else 0
                                 
-                                # Only block if position is less than 1 minute old (truly premature) and no significant profit/loss
-                                # When AI explicitly decides to close based on exit conditions, allow it immediately
-                                MIN_PREMATURE_TIME_MINUTES = 1.0  # Only block positions less than 1 minute old
-                                
-                                if time_since_entry is not None and time_since_entry < MIN_PREMATURE_TIME_MINUTES:
-                                    # Check if there's significant profit or loss that warrants immediate exit
-                                    if existing_is_long:
-                                        profit_pct = ((current_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
-                                    else:
-                                        profit_pct = ((entry_price - current_price) / entry_price * 100) if entry_price > 0 else 0
-                                    
-                                    # Only block if it's truly premature AND no significant profit/loss
-                                    if abs(profit_pct) < 1.0:  # Less than 1% profit/loss
-                                        add_event(f"⏸️  BLOCKED PREMATURE EXIT for {asset}: Position only {time_since_entry:.1f} minutes old. Allowing position to mature.")
-                                        continue
-                                
-                                # Log the exit decision
-                                if time_since_entry is not None:
-                                    add_event(f"✅ EXIT for {asset} after {time_since_entry:.1f} minutes (price move: {price_move_pct:.2f}%)")
-                                else:
-                                    add_event(f"✅ EXIT for {asset} (price move: {price_move_pct:.2f}%)")
+                                # Log the exit decision - AI has decided to close, execute immediately
+                                add_event(f"✅ EXIT for {asset}: AI decision to close position (price move: {price_move_pct:.2f}%)")
                         
                         # Get per-asset leverage (from .env override or default)
                         asset_leverage = per_asset_leverage.get(asset, default_leverage)
