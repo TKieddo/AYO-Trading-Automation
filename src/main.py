@@ -65,8 +65,10 @@ class PrintToLog:
 import sys
 original_stdout = sys.stdout
 original_stderr = sys.stderr
+# Keep original stderr for error output
 sys.stdout = PrintToLog()
-sys.stderr = PrintToLog()
+# Don't redirect stderr - keep it for actual errors
+# sys.stderr = PrintToLog()
 
 logging.info("=" * 80)
 logging.info("Trading Agent Starting")
@@ -97,7 +99,10 @@ def get_interval_seconds(interval_str):
 
 def main():
     """Parse CLI args, bootstrap dependencies, and launch the trading loop."""
-    clear_terminal()
+    try:
+        clear_terminal()
+    except Exception as e:
+        print(f"Warning: Could not clear terminal: {e}", file=original_stderr)
     parser = argparse.ArgumentParser(description="LLM-based Trading Agent")
     parser.add_argument("--assets", type=str, nargs="+", required=False, help="Assets to trade, e.g., BTC ETH")
     parser.add_argument("--interval", type=str, required=False, help="Interval period, e.g., 1h")
@@ -3202,9 +3207,23 @@ def main():
             return False
         return False
 
-    asyncio.run(main_async())
+    try:
+        asyncio.run(main_async())
+    except KeyboardInterrupt:
+        logging.info("Trading agent stopped by user")
+    except Exception as e:
+        logging.error(f"Fatal error in main_async: {e}", exc_info=True)
+        print(f"Fatal error: {e}", file=original_stderr)
+        import traceback
+        traceback.print_exc(file=original_stderr)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"Fatal error in main: {e}", file=original_stderr)
+        import traceback
+        traceback.print_exc(file=original_stderr)
+        raise
 
