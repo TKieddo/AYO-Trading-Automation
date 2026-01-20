@@ -1123,6 +1123,27 @@ def main():
                                 if existing_is_long is None:
                                     pos_quantity = float(pos.get('quantity', 0))
                                     existing_is_long = pos_quantity > 0
+                                
+                                # Try to get opened_at from position's openTime if not in active_trades
+                                if not opened_at_str:
+                                    open_time = pos.get('openTime') or pos.get('openedAt')
+                                    if open_time:
+                                        try:
+                                            if isinstance(open_time, (int, float)):
+                                                # Timestamp in milliseconds
+                                                opened_at_dt = datetime.fromtimestamp(open_time / 1000, tz=timezone.utc)
+                                                opened_at_str = opened_at_dt.isoformat()
+                                            elif isinstance(open_time, str):
+                                                # Try to parse ISO string
+                                                opened_at_dt = datetime.fromisoformat(open_time.replace('Z', '+00:00'))
+                                                opened_at_str = opened_at_dt.isoformat()
+                                        except Exception as e:
+                                            logging.debug(f"Could not parse openTime for {asset}: {e}")
+                                
+                                # Get entry price from position if not in trade record
+                                if not entry_price or entry_price == current_price:
+                                    entry_price = float(pos.get('entry_price') or pos.get('entryPrice') or current_price)
+                                
                                 break
                         
                         # If we have an existing position, check what the LLM wants to do
@@ -1136,47 +1157,45 @@ def main():
                                 add_event(f"⏸️  BLOCKED ADDING TO POSITION for {asset}: Already have {'long' if existing_is_long else 'short'} position. Only close/flip when exit conditions are met. Holding existing position.")
                                 continue  # Skip this trade - hold the existing position
                             
-                            # If closing/flipping, validate exit conditions before allowing
-                            if is_closing and opened_at_str:
-                                try:
-                                    # Parse ISO format datetime
-                                    if 'T' in opened_at_str:
-                                        opened_at = datetime.fromisoformat(opened_at_str.replace('Z', '+00:00'))
-                                    else:
-                                        opened_at = datetime.fromisoformat(opened_at_str)
-                                    time_since_entry = (datetime.now(timezone.utc) - opened_at).total_seconds() / 60  # minutes
-                                    
-                                    # Calculate price movement
-                                    price_move_pct = abs((current_price - entry_price) / entry_price * 100) if entry_price and entry_price > 0 else 0
-                                    
-                                    # MINIMUM HOLD TIME: 15 minutes before allowing invalidation-based exits
-                                    MIN_HOLD_TIME_MINUTES = 15
-                                    # MINIMUM PRICE MOVEMENT: 2% adverse move before considering invalidation
-                                    MIN_ADVERSE_MOVE_PCT = 2.0
-                                    
-                                    # Check if price moved against position (adverse move)
+                            # If closing/flipping, allow immediately when AI decides based on exit conditions
+                            # Only block if position is truly premature (less than 1 minute) and no exit conditions met
+                            if is_closing:
+                                time_since_entry = None
+                                if opened_at_str:
+                                    try:
+                                        # Parse ISO format datetime
+                                        if 'T' in opened_at_str:
+                                            opened_at = datetime.fromisoformat(opened_at_str.replace('Z', '+00:00'))
+                                        else:
+                                            opened_at = datetime.fromisoformat(opened_at_str)
+                                        time_since_entry = (datetime.now(timezone.utc) - opened_at).total_seconds() / 60  # minutes
+                                    except Exception as e:
+                                        logging.warning(f"Could not parse opened_at for {asset}: {e}. Allowing trade to proceed.")
+                                
+                                # Calculate price movement
+                                price_move_pct = abs((current_price - entry_price) / entry_price * 100) if entry_price and entry_price > 0 else 0
+                                
+                                # Only block if position is less than 1 minute old (truly premature) and no significant profit/loss
+                                # When AI explicitly decides to close based on exit conditions, allow it immediately
+                                MIN_PREMATURE_TIME_MINUTES = 1.0  # Only block positions less than 1 minute old
+                                
+                                if time_since_entry is not None and time_since_entry < MIN_PREMATURE_TIME_MINUTES:
+                                    # Check if there's significant profit or loss that warrants immediate exit
                                     if existing_is_long:
-                                        adverse_move = current_price < entry_price
-                                        adverse_move_pct = ((entry_price - current_price) / entry_price * 100) if adverse_move and entry_price > 0 else 0
+                                        profit_pct = ((current_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
                                     else:
-                                        adverse_move = current_price > entry_price
-                                        adverse_move_pct = ((current_price - entry_price) / entry_price * 100) if adverse_move and entry_price > 0 else 0
+                                        profit_pct = ((entry_price - current_price) / entry_price * 100) if entry_price > 0 else 0
                                     
-                                    # Block premature exits unless:
-                                    # 1. Minimum hold time has passed AND
-                                    # 2. Either: (a) Adverse move >= 2% OR (b) TP/SL was hit (handled elsewhere) OR (c) Strong invalidation (price moved 5%+ against)
-                                    if time_since_entry < MIN_HOLD_TIME_MINUTES:
-                                        if adverse_move_pct < MIN_ADVERSE_MOVE_PCT and adverse_move_pct < 5.0:
-                                            add_event(f"⏸️  BLOCKED PREMATURE EXIT for {asset}: Position only {time_since_entry:.1f} minutes old (min: {MIN_HOLD_TIME_MINUTES} min). Price move: {price_move_pct:.2f}% (adverse: {adverse_move_pct:.2f}%). Allowing position to mature before considering invalidation.")
-                                            continue  # Skip this trade - hold the position
-                                    
-                                    # Log the exit decision with context
-                                    if time_since_entry < MIN_HOLD_TIME_MINUTES:
-                                        add_event(f"⚠️  EARLY EXIT for {asset} after {time_since_entry:.1f} minutes (adverse move: {adverse_move_pct:.2f}%) - allowing due to significant adverse movement")
-                                    else:
-                                        add_event(f"✅ EXIT for {asset} after {time_since_entry:.1f} minutes (price move: {price_move_pct:.2f}%)")
-                                except Exception as e:
-                                    logging.warning(f"Could not parse opened_at for {asset}: {e}. Allowing trade to proceed.")
+                                    # Only block if it's truly premature AND no significant profit/loss
+                                    if abs(profit_pct) < 1.0:  # Less than 1% profit/loss
+                                        add_event(f"⏸️  BLOCKED PREMATURE EXIT for {asset}: Position only {time_since_entry:.1f} minutes old. Allowing position to mature.")
+                                        continue
+                                
+                                # Log the exit decision
+                                if time_since_entry is not None:
+                                    add_event(f"✅ EXIT for {asset} after {time_since_entry:.1f} minutes (price move: {price_move_pct:.2f}%)")
+                                else:
+                                    add_event(f"✅ EXIT for {asset} (price move: {price_move_pct:.2f}%)")
                         
                         # Get per-asset leverage (from .env override or default)
                         asset_leverage = per_asset_leverage.get(asset, default_leverage)
