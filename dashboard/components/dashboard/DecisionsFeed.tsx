@@ -174,7 +174,7 @@ export function DecisionsFeed({ variant = "homepage" }: DecisionsFeedProps = {})
   // Show loading state only on initial load (when we have no decisions yet)
   if (loading && decisions.length === 0 && !hasLoadedOnce) {
     return (
-      <Card className="rounded-[24px] bg-lime-400/20 backdrop-blur-md border-lime-400/30">
+      <Card className={cardClassName}>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-white">
             <Brain className="w-5 h-5" />
@@ -184,7 +184,7 @@ export function DecisionsFeed({ variant = "homepage" }: DecisionsFeedProps = {})
         <CardContent>
           <div className="animate-pulse space-y-4">
             {[...Array(3)].map((_, i) => (
-              <div key={i} className="h-20 bg-lime-400/10 rounded"></div>
+              <div key={i} className={loadingClassName}></div>
             ))}
           </div>
         </CardContent>
