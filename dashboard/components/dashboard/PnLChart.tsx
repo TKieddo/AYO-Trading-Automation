@@ -419,7 +419,7 @@ export function PnLChart({ externalRange, showRangeToggle = true }: PnLChartProp
                         <div className={`${isGain ? "bg-black" : "bg-orange-400"} rounded-[6px] transition-all duration-300`} style={{ height, width: isActive ? 24 : 8 }} />
                       </div>
                       {/* Day pill */}
-                      <div className={`${p.label && (p.label.includes("-") || p.label.length > 1) ? "h-15 w-15" : "h-9 w-9"} rounded-full flex items-center justify-center font-semibold ${isActive ? "bg-slate-900 text-white" : "bg-slate-200 text-slate-700"} ${p.label && (p.label.includes("-") || p.label.length > 1) ? "text-[9px] leading-tight" : "text-sm"}`}>{p.label}</div>
+                      <div className={`h-9 w-9 rounded-full flex items-center justify-center font-semibold ${isActive ? "bg-slate-900 text-white" : "bg-slate-200 text-slate-700"} text-sm px-1`}>{p.label}</div>
                     </div>
                   );
                 })}

@@ -250,14 +250,14 @@ export function DecisionsFeed({ variant = "homepage" }: DecisionsFeedProps = {})
                         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
                           isBuy
                             ? isDashboard
-                              ? "bg-green-100 text-green-700 border border-green-300"
+                              ? "bg-green-500/40 text-green-900 border border-green-500/60"
                               : "bg-green-500/30 text-green-200 border border-green-400/50"
                             : isSell
                             ? isDashboard
-                              ? "bg-red-100 text-red-700 border border-red-300"
+                              ? "bg-red-500/40 text-red-900 border border-red-500/60"
                               : "bg-red-500/30 text-red-200 border border-red-400/50"
                             : isDashboard
-                            ? "bg-slate-100 text-slate-700 border border-slate-300"
+                            ? "bg-slate-500/40 text-slate-900 border border-slate-500/60"
                             : "bg-slate-500/30 text-slate-200 border border-slate-400/50"
                         }`}
                       >
@@ -268,12 +268,12 @@ export function DecisionsFeed({ variant = "homepage" }: DecisionsFeedProps = {})
                       </span>
                     </div>
                     {decision.allocationUsd && (
-                      <div className={`text-sm mb-1 ${isDashboard ? "text-slate-600" : "text-lime-200/90"}`}>
+                      <div className={`text-sm mb-1 ${isDashboard ? "text-slate-800" : "text-lime-200/90"}`}>
                         Allocation: {formatCurrency(decision.allocationUsd)}
                       </div>
                     )}
                     {(decision.tpPrice || decision.slPrice) && (
-                      <div className={`flex gap-4 text-xs mb-1 ${isDashboard ? "text-slate-500" : "text-lime-300/80"}`}>
+                      <div className={`flex gap-4 text-xs mb-1 ${isDashboard ? "text-slate-700" : "text-lime-300/80"}`}>
                         {decision.tpPrice && (
                           <span title="Take Profit: Price target to close position at a profit">
                             Target: {formatCurrency(decision.tpPrice)}
