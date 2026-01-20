@@ -63,6 +63,8 @@ export async function GET() {
       llm_model: "deepseek-reasoner",
       deepseek_max_tokens: 20000,
       next_public_base_url: "http://localhost:3001",
+      stop_loss_usd: null,
+      take_profit_strict_enforcement: false,
       updated_at: new Date().toISOString(),
     };
 
@@ -125,7 +127,9 @@ export async function POST(req: NextRequest) {
       asset_timeframes,
       llm_model,
       deepseek_max_tokens,
-      next_public_base_url
+      next_public_base_url,
+      stop_loss_usd,
+      take_profit_strict_enforcement
     } = body;
 
     // Validate inputs
@@ -146,6 +150,13 @@ export async function POST(req: NextRequest) {
     if (stop_loss_percent !== undefined && (stop_loss_percent < 0.1 || stop_loss_percent > 50)) {
       return NextResponse.json(
         { error: "Stop loss percent must be between 0.1 and 50" },
+        { status: 400 }
+      );
+    }
+
+    if (stop_loss_usd !== undefined && stop_loss_usd !== null && (stop_loss_usd >= 0 || stop_loss_usd < -100000)) {
+      return NextResponse.json(
+        { error: "Stop loss USD must be negative and between -100000 and 0 (e.g., -18)" },
         { status: 400 }
       );
     }
@@ -249,6 +260,8 @@ export async function POST(req: NextRequest) {
     if (llm_model !== undefined) updateData.llm_model = String(llm_model).trim();
     if (deepseek_max_tokens !== undefined) updateData.deepseek_max_tokens = Math.round(deepseek_max_tokens);
     if (next_public_base_url !== undefined) updateData.next_public_base_url = String(next_public_base_url).trim();
+    if (stop_loss_usd !== undefined) updateData.stop_loss_usd = stop_loss_usd === null || stop_loss_usd === "" ? null : Number(stop_loss_usd);
+    if (take_profit_strict_enforcement !== undefined) updateData.take_profit_strict_enforcement = Boolean(take_profit_strict_enforcement);
 
     // Upsert settings
     const { data, error } = await supabase

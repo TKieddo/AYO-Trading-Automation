@@ -43,6 +43,8 @@ interface TradingSettings {
   llm_model: string;
   deepseek_max_tokens: number;
   next_public_base_url: string;
+  stop_loss_usd: number | null;
+  take_profit_strict_enforcement: boolean;
 }
 
 export function TradingSettings() {
@@ -143,6 +145,8 @@ export function TradingSettings() {
           scalping_tp_percent: data.scalping_tp_percent ?? 5.0,
           scalping_sl_percent: data.scalping_sl_percent ?? 5.0,
           auto_strategy_cache_minutes: data.auto_strategy_cache_minutes ?? 0,
+          stop_loss_usd: data.stop_loss_usd ?? null,
+          take_profit_strict_enforcement: data.take_profit_strict_enforcement ?? false,
           asset_leverage_overrides: data.asset_leverage_overrides || {},
           asset_timeframes: data.asset_timeframes || {},
           llm_model: data.llm_model || "deepseek-reasoner",
@@ -524,6 +528,50 @@ export function TradingSettings() {
                 Percentage below entry price (long) or above entry price (short) to stop loss. Higher values allow more room for reversals.
               </p>
             </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="stop_loss_usd" className="font-semibold">
+                Stop Loss (USD) - Optional
+                <span className="text-xs text-slate-500 font-normal ml-2">(e.g., -18 for $18 max loss)</span>
+              </Label>
+              <Input
+                id="stop_loss_usd"
+                type="number"
+                min="-10000"
+                max="0"
+                step="0.01"
+                value={settings.stop_loss_usd ?? ""}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    stop_loss_usd: e.target.value ? parseFloat(e.target.value) : null,
+                  })
+                }
+                className="w-full"
+                placeholder="Leave empty to use percentage only"
+              />
+              <p className="text-xs text-slate-500">
+                Maximum loss in USD per position (negative value, e.g., -18 means close if loss reaches $18). 
+                If set, position will close when EITHER percentage OR USD threshold is breached. Leave empty to use percentage only.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 pt-2">
+              <input
+                type="checkbox"
+                id="take_profit_strict_enforcement"
+                checked={settings.take_profit_strict_enforcement}
+                onChange={(e) => setSettings({ ...settings, take_profit_strict_enforcement: e.target.checked })}
+                className="w-4 h-4 text-[#c0e156] focus:ring-[#c0e156] rounded"
+              />
+              <Label htmlFor="take_profit_strict_enforcement" className="font-semibold">
+                Strict Take Profit Enforcement
+              </Label>
+            </div>
+            <p className="text-xs text-slate-500 ml-6">
+              If checked, take profit percentage will be strictly enforced (close immediately when TP% is reached). 
+              If unchecked, take profit will be guided by market conditions and indicators.
+            </p>
           </div>
         </div>
 

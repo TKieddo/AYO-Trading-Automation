@@ -308,6 +308,11 @@ def main():
     async def run_loop():
         """Main trading loop that gathers data, calls the agent, and executes trades."""
         nonlocal invocation_count, initial_account_value
+        
+        # Position cache for PnL tracking (updated every 2-20 seconds)
+        position_cache = {}  # asset -> {pnl_usd, pnl_percent, timestamp, entry_price, initial_margin}
+        last_cache_update = {}  # asset -> timestamp
+        
         while True:
             invocation_count += 1
             minutes_since_start = (datetime.now(timezone.utc) - start_time).total_seconds() / 60
@@ -323,6 +328,8 @@ def main():
             total_return_pct = ((account_value - initial_account_value) / initial_account_value * 100.0) if initial_account_value else 0.0
 
             positions = []
+            current_time = datetime.now(timezone.utc)
+            
             for pos_wrap in state['positions']:
                 pos = pos_wrap
                 coin = pos.get('coin') or pos.get('symbol')
@@ -333,14 +340,62 @@ def main():
                 else:
                     asset_exchange = exchange
                 current_px = await asset_exchange.get_current_price(coin) if coin else None
+                
+                # Calculate PnL in dollars and percentage (same logic as PositionsTable)
+                unrealized_pnl = round_or_none(pos.get('pnl'), 4) or 0
+                entry_price = round_or_none(pos.get('entryPx'), 2) or 0
+                position_size = abs(float(pos.get('szi', 0)))
+                initial_margin = pos.get('initialMargin') or pos.get('positionInitialMargin')
+                leverage = pos.get('leverage')
+                
+                # Calculate ROI percentage (same as PositionsTable)
+                roi_percent = None
+                if pos.get('roiPercent') is not None:
+                    roi_percent = float(pos.get('roiPercent'))
+                elif pos.get('roi') is not None:
+                    roi_percent = float(pos.get('roi'))
+                elif initial_margin and initial_margin > 0:
+                    # Fallback: calculate ROI from PnL / initial margin
+                    roi_percent = (unrealized_pnl / float(initial_margin)) * 100
+                elif entry_price > 0 and position_size > 0:
+                    # Fallback: calculate from notional value
+                    notional_value = position_size * entry_price
+                    if notional_value > 0:
+                        roi_percent = (unrealized_pnl / notional_value) * 100
+                
+                # Update position cache (every 2-20 seconds)
+                cache_interval = 10  # Update cache every 10 seconds
+                should_update_cache = (
+                    coin not in last_cache_update or 
+                    (current_time - last_cache_update[coin]).total_seconds() >= cache_interval
+                )
+                
+                if should_update_cache:
+                    position_cache[coin] = {
+                        "pnl_usd": unrealized_pnl,
+                        "pnl_percent": roi_percent,
+                        "timestamp": current_time.isoformat(),
+                        "entry_price": entry_price,
+                        "initial_margin": initial_margin,
+                        "leverage": leverage,
+                        "position_size": position_size
+                    }
+                    last_cache_update[coin] = current_time
+                
                 positions.append({
                     "symbol": coin,
                     "quantity": round_or_none(pos.get('szi'), 6),
-                    "entry_price": round_or_none(pos.get('entryPx'), 2),
+                    "entry_price": entry_price,
                     "current_price": round_or_none(current_px, 2),
                     "liquidation_price": round_or_none(pos.get('liquidationPx') or pos.get('liqPx'), 2),
-                    "unrealized_pnl": round_or_none(pos.get('pnl'), 4),
-                    "leverage": pos.get('leverage')
+                    "unrealized_pnl": unrealized_pnl,
+                    "unrealized_pnl_usd": unrealized_pnl,  # Explicit USD value
+                    "unrealized_pnl_percent": roi_percent,  # Percentage value
+                    "pnl_sign": "+" if unrealized_pnl >= 0 else "-",  # Sign indicator
+                    "pnl_percent_sign": "+" if (roi_percent or 0) >= 0 else "-",  # Percent sign indicator
+                    "leverage": leverage,
+                    "initial_margin": initial_margin,
+                    "roiPercent": roi_percent
                 })
 
             recent_diary = []
@@ -547,8 +602,118 @@ def main():
             default_leverage = trading_settings["leverage"]
             tp_percent = trading_settings["take_profit_percent"]
             sl_percent = trading_settings["stop_loss_percent"]
+            scalping_tp_percent = trading_settings.get("scalping_tp_percent", 5.0)
+            scalping_sl_percent = trading_settings.get("scalping_sl_percent", 5.0)
+            take_profit_strict_enforcement = trading_settings.get("take_profit_strict_enforcement", False)
+            stop_loss_usd = trading_settings.get("stop_loss_usd")  # Optional: stop loss in USD (e.g., -$18)
             # Position sizing settings (target_profit_per_1pct_move, max_positions, position_sizing_mode) are in trading_settings dict
             # These come from database or .env file (TARGET_PROFIT_PER_1PCT_MOVE, MAX_POSITIONS, POSITION_SIZING_MODE)
+            
+            # ========================================================================
+            # CRITICAL: ENFORCE STOP LOSS BEFORE AI DECISION
+            # Stop loss must be respected at all costs, regardless of strategy
+            # ========================================================================
+            positions_to_close = []  # Track positions that hit stop loss
+            
+            for pos in positions:
+                asset = pos.get('symbol')
+                if not asset:
+                    continue
+                
+                position_size = abs(float(pos.get('quantity', 0)))
+                if position_size <= 0:
+                    continue
+                
+                # Get position data
+                raw_size = float(pos.get('quantity', 0))
+                is_long = raw_size > 0
+                entry_price = pos.get('entry_price') or 0
+                current_price = pos.get('current_price') or 0
+                unrealized_pnl = pos.get('unrealized_pnl') or 0
+                pnl_percent = pos.get('unrealized_pnl_percent') or 0
+                initial_margin = pos.get('initial_margin')
+                
+                if not entry_price or entry_price <= 0 or not current_price or current_price <= 0:
+                    continue
+                
+                # Determine which strategy is active for this position
+                current_strategy_name = agent.get_name()
+                is_scalping = "scalping" in current_strategy_name.lower()
+                
+                # Get stop loss threshold (scalping or regular)
+                effective_sl_percent = scalping_sl_percent if is_scalping else sl_percent
+                
+                # Check stop loss in PERCENTAGE
+                sl_breached_percent = False
+                if pnl_percent is not None:
+                    # For long: loss when PnL% is negative and exceeds SL%
+                    # For short: loss when PnL% is negative and exceeds SL%
+                    if pnl_percent <= -effective_sl_percent:
+                        sl_breached_percent = True
+                        add_event(f"🛑 STOP LOSS BREACHED (Percentage) for {asset}: {pnl_percent:.2f}% (threshold: -{effective_sl_percent}%). Closing immediately!")
+                
+                # Check stop loss in USD (if configured)
+                sl_breached_usd = False
+                if stop_loss_usd is not None and stop_loss_usd < 0:
+                    # stop_loss_usd is negative (e.g., -18 means close if loss >= $18)
+                    if unrealized_pnl <= stop_loss_usd:
+                        sl_breached_usd = True
+                        add_event(f"🛑 STOP LOSS BREACHED (USD) for {asset}: ${unrealized_pnl:.2f} (threshold: ${stop_loss_usd:.2f}). Closing immediately!")
+                
+                # If stop loss is breached, mark for immediate closure
+                if sl_breached_percent or sl_breached_usd:
+                    positions_to_close.append({
+                        "asset": asset,
+                        "is_long": is_long,
+                        "position_size": position_size,
+                        "reason": f"Stop Loss: {pnl_percent:.2f}% / ${unrealized_pnl:.2f}",
+                        "pnl_percent": pnl_percent,
+                        "pnl_usd": unrealized_pnl
+                    })
+            
+            # Close positions that hit stop loss BEFORE AI decision
+            for pos_to_close in positions_to_close:
+                asset = pos_to_close["asset"]
+                is_long = pos_to_close["is_long"]
+                position_size = pos_to_close["position_size"]
+                reason = pos_to_close["reason"]
+                pnl_percent = pos_to_close["pnl_percent"]
+                pnl_usd = pos_to_close["pnl_usd"]
+                
+                try:
+                    add_event(f"🛑 FORCE CLOSING {asset} due to stop loss: {reason}")
+                    close_action = "sell" if is_long else "buy"
+                    if is_long:
+                        close_order = await hyperliquid.place_sell_order(asset, position_size)
+                    else:
+                        close_order = await hyperliquid.place_buy_order(asset, position_size)
+                    add_event(f"✅ Force closed {asset} position (Stop Loss) via {close_action} order - Loss: {pnl_percent:.2f}% (${pnl_usd:.2f})")
+                    
+                    # Remove from active trades
+                    for tr in active_trades[:]:
+                        if tr.get('asset') == asset:
+                            active_trades.remove(tr)
+                    
+                    # Log to diary
+                    with open(diary_path, "a") as f:
+                        f.write(json.dumps({
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "asset": asset,
+                            "action": "close_stop_loss",
+                            "entry_price": entry_price,
+                            "exit_price": current_price,
+                            "amount": position_size,
+                            "reason": reason,
+                            "pnl": pnl_usd,
+                            "pnl_percent": pnl_percent
+                        }) + "\n")
+                    
+                    # Remove from positions list so AI doesn't see it
+                    positions = [p for p in positions if p.get('symbol') != asset]
+                except Exception as e:
+                    add_event(f"❌ Failed to force close {asset} position (Stop Loss): {e}")
+                    import traceback
+                    logging.error(f"Stop loss closure error: {traceback.format_exc()}")
 
             # Build per-asset leverage map for context and enforcement
             per_asset_leverage = {}
@@ -588,6 +753,26 @@ def main():
                     "assets_with_positions": list(assets_with_positions_set),
                     "flat_assets": flat_assets,
                     "critical_note": f"Assets {flat_assets} have NO positions - ACTIVELY LOOK FOR ENTRY OPPORTUNITIES using technical analysis. Do not default to 'hold' for flat assets unless you've analyzed and found NO viable setups."
+                }),
+                ("positions_data", {
+                    "positions": [
+                        {
+                            "asset": p.get('symbol'),
+                            "side": "long" if float(p.get('quantity', 0)) > 0 else "short",
+                            "entry_price": p.get('entry_price'),
+                            "current_price": p.get('current_price'),
+                            "pnl_usd": p.get('unrealized_pnl_usd'),
+                            "pnl_percent": p.get('unrealized_pnl_percent'),
+                            "pnl_sign": p.get('pnl_sign'),  # "+" or "-"
+                            "pnl_percent_sign": p.get('pnl_percent_sign'),  # "+" or "-"
+                            "leverage": p.get('leverage'),
+                            "size": abs(float(p.get('quantity', 0))),
+                            "initial_margin": p.get('initial_margin'),
+                            "cached_pnl": position_cache.get(p.get('symbol'), {})  # Cached data for redundancy
+                        }
+                        for p in positions if p.get('symbol')
+                    ],
+                    "note": "Each position includes PnL in USD and percentage with sign indicators. Use cached_pnl if current data is unavailable."
                 }),
                 ("instructions", {
                     "assets": args.assets,
@@ -1023,6 +1208,24 @@ def main():
                 tp_hit = False
                 sl_hit = False
                 
+                # Determine which strategy is active for this position
+                current_strategy_name = agent.get_name()
+                is_scalping = "scalping" in current_strategy_name.lower()
+                
+                # Get TP/SL thresholds (scalping or regular)
+                effective_tp_percent = scalping_tp_percent if is_scalping else tp_percent
+                effective_sl_percent = scalping_sl_percent if is_scalping else sl_percent
+                
+                # Check if strict TP enforcement is enabled
+                if take_profit_strict_enforcement and pnl_percent is not None:
+                    # Strict TP: Close immediately when TP% is reached
+                    if pnl_percent >= effective_tp_percent:
+                        tp_hit = True
+                        should_take_profit = True
+                        profit_reason = f"Take Profit (Strict): {pnl_percent:.2f}% >= {effective_tp_percent}%"
+                        add_event(f"🎯 STRICT TAKE PROFIT triggered for {asset}: {pnl_percent:.2f}% >= {effective_tp_percent}%")
+                
+                # Check TP price hit
                 if tp_price:
                     tp_price = float(tp_price)
                     if is_long:
@@ -1030,6 +1233,7 @@ def main():
                     else:  # short
                         tp_hit = current_price <= tp_price
                 
+                # Check SL price hit (already handled above, but check here too for redundancy)
                 if sl_price:
                     sl_price = float(sl_price)
                     if is_long:
@@ -1040,8 +1244,8 @@ def main():
                 if tp_hit or sl_hit:
                     should_take_profit = True
                     profit_reason = "TP" if tp_hit else "SL"
-                elif not tp_price and not sl_price:
-                    # No TP/SL found, but if up significantly, take profit
+                elif not tp_price and not sl_price and not take_profit_strict_enforcement:
+                    # No TP/SL found, but if up significantly, take profit (only if strict TP is not enabled)
                     if pnl_percent >= 10.0:
                         should_take_profit = True
                         profit_reason = f"Profit at {pnl_percent:.1f}% - no TP set, taking profit"
