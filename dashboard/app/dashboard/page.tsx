@@ -23,7 +23,7 @@ export default function DashboardPage() {
           <PnLChart />
         </div>
         <div className="lg:col-span-1" id="decisions">
-          <DecisionsFeed />
+          <DecisionsFeed variant="dashboard" />
         </div>
       </div>
 

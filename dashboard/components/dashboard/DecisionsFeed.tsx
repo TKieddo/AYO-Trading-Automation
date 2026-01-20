@@ -45,10 +45,57 @@ function formatRationale(rationale: string | undefined, reasoning: string | unde
   return formatted;
 }
 
-export function DecisionsFeed() {
+interface DecisionsFeedProps {
+  /**
+   * Variant: "homepage" (transparent lime background) or "dashboard" (white background with dark text)
+   * @default "homepage"
+   */
+  variant?: "homepage" | "dashboard";
+}
+
+export function DecisionsFeed({ variant = "homepage" }: DecisionsFeedProps = {}) {
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  
+  // Styling based on variant
+  const isDashboard = variant === "dashboard";
+  const cardClassName = isDashboard 
+    ? "rounded-[24px] bg-white border border-slate-200"
+    : "rounded-[24px] bg-lime-400/20 backdrop-blur-md border-lime-400/30";
+  const titleClassName = isDashboard
+    ? "flex items-center gap-2 text-slate-800"
+    : "flex items-center gap-2 text-white";
+  const textClassName = isDashboard
+    ? "text-slate-700"
+    : "text-lime-200/80";
+  const assetClassName = isDashboard
+    ? "font-semibold text-slate-900"
+    : "font-semibold text-white";
+  const timeClassName = isDashboard
+    ? "text-xs text-slate-500"
+    : "text-xs text-lime-300/70";
+  const dividerClassName = isDashboard
+    ? "mt-3 border-b border-slate-200"
+    : "mt-3 border-b border-lime-400/20";
+  const timelineClassName = isDashboard
+    ? "absolute left-3 inset-y-0 w-[2px] bg-slate-300"
+    : "absolute left-3 inset-y-0 w-[2px] bg-lime-400/40";
+  const nodeClassName = isDashboard
+    ? "absolute left-[10px] top-4 h-3 w-3 rounded-full bg-slate-400 border-2 border-slate-200"
+    : "absolute left-[10px] top-4 h-3 w-3 rounded-full bg-lime-400 border-2 border-black/20";
+  const emptyIconClassName = isDashboard
+    ? "w-12 h-12 text-slate-400 mb-4"
+    : "w-12 h-12 text-lime-400/50 mb-4";
+  const emptyTextClassName = isDashboard
+    ? "text-slate-600 text-sm mb-2"
+    : "text-lime-200/80 text-sm mb-2";
+  const emptySubtextClassName = isDashboard
+    ? "text-slate-500 text-xs"
+    : "text-lime-300/60 text-xs";
+  const loadingClassName = isDashboard
+    ? "h-20 bg-slate-100 rounded"
+    : "h-20 bg-lime-400/10 rounded";
 
   useEffect(() => {
     let isMounted = true;
@@ -149,18 +196,18 @@ export function DecisionsFeed() {
   // This prevents flickering when API temporarily fails
   if (decisions.length === 0 && !loading && hasLoadedOnce) {
     return (
-      <Card className="rounded-[24px] bg-lime-400/20 backdrop-blur-md border-lime-400/30">
+      <Card className={cardClassName}>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-white">
+          <CardTitle className={titleClassName}>
             <Brain className="w-5 h-5" />
             AI Decisions
           </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex flex-col items-center justify-center py-12 text-center">
-            <Brain className="w-12 h-12 text-lime-400/50 mb-4" />
-            <p className="text-lime-200/80 text-sm mb-2">No trading decisions yet</p>
-            <p className="text-lime-300/60 text-xs">
+            <Brain className={emptyIconClassName} />
+            <p className={emptyTextClassName}>No trading decisions yet</p>
+            <p className={emptySubtextClassName}>
               Decisions will appear here once the trading agent starts making trades
             </p>
           </div>
@@ -172,9 +219,9 @@ export function DecisionsFeed() {
   // Always show decisions if we have them, even if we're refreshing in background
   // This prevents flickering during updates
   return (
-    <Card className="rounded-[24px] bg-lime-400/20 backdrop-blur-md border-lime-400/30">
+    <Card className={cardClassName}>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-white">
+        <CardTitle className={titleClassName}>
           <Brain className="w-5 h-5" />
           AI Decisions
         </CardTitle>
@@ -182,7 +229,7 @@ export function DecisionsFeed() {
       <CardContent className="pb-0">
         <div className="relative max-h-[550px] overflow-y-auto pr-2">
           {/* Vertical timeline line */}
-          <div className="absolute left-3 inset-y-0 w-[2px] bg-lime-400/40"></div>
+          <div className={timelineClassName}></div>
           <div className="space-y-0">
           {decisions.map((decision, idx) => {
             const isBuy = decision.action === "buy";
@@ -192,19 +239,25 @@ export function DecisionsFeed() {
             return (
               <div key={decision.id} className="relative pl-8 py-3">
                 {/* Node connector */}
-                <div className="absolute left-[10px] top-4 h-3 w-3 rounded-full bg-lime-400 border-2 border-black/20"></div>
+                <div className={nodeClassName}></div>
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="font-semibold text-white">
+                      <span className={assetClassName}>
                         {decision.asset}
                       </span>
                       <span
                         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
                           isBuy
-                            ? "bg-green-500/30 text-green-200 border border-green-400/50"
+                            ? isDashboard
+                              ? "bg-green-100 text-green-700 border border-green-300"
+                              : "bg-green-500/30 text-green-200 border border-green-400/50"
                             : isSell
-                            ? "bg-red-500/30 text-red-200 border border-red-400/50"
+                            ? isDashboard
+                              ? "bg-red-100 text-red-700 border border-red-300"
+                              : "bg-red-500/30 text-red-200 border border-red-400/50"
+                            : isDashboard
+                            ? "bg-slate-100 text-slate-700 border border-slate-300"
                             : "bg-slate-500/30 text-slate-200 border border-slate-400/50"
                         }`}
                       >
@@ -215,12 +268,12 @@ export function DecisionsFeed() {
                       </span>
                     </div>
                     {decision.allocationUsd && (
-                      <div className="text-sm text-lime-200/90 mb-1">
+                      <div className={`text-sm mb-1 ${isDashboard ? "text-slate-600" : "text-lime-200/90"}`}>
                         Allocation: {formatCurrency(decision.allocationUsd)}
                       </div>
                     )}
                     {(decision.tpPrice || decision.slPrice) && (
-                      <div className="flex gap-4 text-xs text-lime-300/80 mb-1">
+                      <div className={`flex gap-4 text-xs mb-1 ${isDashboard ? "text-slate-500" : "text-lime-300/80"}`}>
                         {decision.tpPrice && (
                           <span title="Take Profit: Price target to close position at a profit">
                             Target: {formatCurrency(decision.tpPrice)}
@@ -233,17 +286,17 @@ export function DecisionsFeed() {
                         )}
                       </div>
                     )}
-                    <p className="text-sm text-lime-200/80 mt-2 leading-relaxed">
+                    <p className={`text-sm mt-2 leading-relaxed ${textClassName}`}>
                       {formatRationale(decision.rationale, decision.reasoning, decision.action)}
                     </p>
                   </div>
-                  <div className="text-xs text-lime-300/70 flex-shrink-0">
+                  <div className={`text-xs flex-shrink-0 ${timeClassName}`}>
                     {formatRelativeTime(decision.timestamp)}
                   </div>
                 </div>
                 {/* Thin separator */}
                 {idx < decisions.length - 1 && (
-                  <div className="mt-3 border-b border-lime-400/20" />
+                  <div className={dividerClassName} />
                 )}
               </div>
             );

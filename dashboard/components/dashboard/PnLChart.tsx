@@ -147,7 +147,7 @@ export function PnLChart({ externalRange, showRangeToggle = true }: PnLChartProp
     
     // Check if we're in week mode (groupBy=week) - show all 7 days (API filters to current week only)
     if (effectiveRange === "week" || externalRange === "7d") {
-      const weekdayLetters = ["M", "T", "W", "T", "F", "Sa", "Su"]; // Mon, Tue, Wed, Thu, Fri, Sat, Sun
+      const weekdayLetters = ["M", "Tu", "W", "Th", "F", "Sa", "Su"]; // Mon, Tue, Wed, Thu, Fri, Sat, Sun
       return weekdayLetters.map(label => ({
         label,
         value: dataMap.get(label) ?? 0
@@ -255,7 +255,7 @@ export function PnLChart({ externalRange, showRangeToggle = true }: PnLChartProp
     if (!data || data.length === 0) {
       // For week mode, show all 7 days with 0 values
       if (effectiveRange === "week") {
-        const weekdayLetters = ["M", "T", "W", "T", "F", "Sa", "Su"]; // Mon, Tue, Wed, Thu, Fri, Sat, Sun
+        const weekdayLetters = ["M", "Tu", "W", "Th", "F", "Sa", "Su"]; // Mon, Tue, Wed, Thu, Fri, Sat, Sun
         return weekdayLetters.map(label => ({ label, value: 0 }));
       }
       // For month mode, show all 5 weeks with 0 values
@@ -419,7 +419,7 @@ export function PnLChart({ externalRange, showRangeToggle = true }: PnLChartProp
                         <div className={`${isGain ? "bg-black" : "bg-orange-400"} rounded-[6px] transition-all duration-300`} style={{ height, width: isActive ? 24 : 8 }} />
                       </div>
                       {/* Day pill */}
-                      <div className={`${p.label && p.label.includes("-") ? "h-15 w-15" : "h-9 w-9"} rounded-full flex items-center justify-center font-semibold ${isActive ? "bg-slate-900 text-white" : "bg-slate-200 text-slate-700"} ${p.label && p.label.includes("-") ? "text-[9px] leading-tight" : "text-sm"}`}>{p.label}</div>
+                      <div className={`${p.label && (p.label.includes("-") || p.label.length > 1) ? "h-15 w-15" : "h-9 w-9"} rounded-full flex items-center justify-center font-semibold ${isActive ? "bg-slate-900 text-white" : "bg-slate-200 text-slate-700"} ${p.label && (p.label.includes("-") || p.label.length > 1) ? "text-[9px] leading-tight" : "text-sm"}`}>{p.label}</div>
                     </div>
                   );
                 })}
