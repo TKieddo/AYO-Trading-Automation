@@ -28,6 +28,11 @@ from src.utils.trading_settings import get_trading_settings, get_max_leverage_fo
 
 load_dotenv()
 
+# Store original stdout/stderr BEFORE creating handlers (Railway logging fix)
+# This ensures handlers write to the original streams, not redirected ones
+original_stdout = sys.stdout
+original_stderr = sys.stderr
+
 # Create a log file handler that captures all output
 log_file_path = "trading_agent.log"
 
@@ -40,35 +45,47 @@ file_handler.setLevel(logging.DEBUG)
 file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 file_handler.setFormatter(file_formatter)
 
-# Create console handler (terminal output)
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
-console_handler.setFormatter(file_formatter)
+# Railway logging fix: Route INFO/DEBUG to stdout, WARNING/ERROR to stderr
+# This ensures Railway correctly classifies log levels instead of marking everything as error
+# Railway treats: stdout -> "info", stderr -> "error"
+class InfoFilter(logging.Filter):
+    """Filter to allow only INFO and DEBUG level logs."""
+    def filter(self, record):
+        return record.levelno <= logging.INFO
+
+# Handler for INFO/DEBUG logs -> stdout (Railway will classify as "info")
+stdout_handler = logging.StreamHandler(original_stdout)
+stdout_handler.setLevel(logging.DEBUG)
+stdout_handler.addFilter(InfoFilter())
+stdout_handler.setFormatter(file_formatter)
+
+# Handler for WARNING/ERROR logs -> stderr (Railway will classify as "error")
+stderr_handler = logging.StreamHandler(original_stderr)
+stderr_handler.setLevel(logging.WARNING)
+stderr_handler.setFormatter(file_formatter)
 
 # Configure root logger
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 logger.addHandler(file_handler)
-logger.addHandler(console_handler)
+logger.addHandler(stdout_handler)
+logger.addHandler(stderr_handler)
 
 # Redirect print statements to logging
+# Note: Handlers use original_stdout/stderr, so print() -> logger -> handlers -> original streams (no recursion)
 class PrintToLog:
     """Redirect print() calls to logging."""
     def write(self, text):
         if text.strip():  # Only log non-empty lines
-            logging.info(text.strip())
+            logger.info(text.strip())
     
     def flush(self):
         pass
 
-# Replace stdout/stderr to capture print statements
-import sys
-original_stdout = sys.stdout
-original_stderr = sys.stderr
-# Keep original stderr for error output
+# Redirect stdout to capture print() statements as INFO logs
+# This goes through our logging handlers which write to the original stdout/stderr
 sys.stdout = PrintToLog()
-# Don't redirect stderr - keep it for actual errors
-# sys.stderr = PrintToLog()
+# Don't redirect stderr - keep it for actual errors and WARNING/ERROR logs
 
 logging.info("=" * 80)
 logging.info("Trading Agent Starting")
