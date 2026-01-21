@@ -114,13 +114,12 @@ class ScalpingStrategy(StrategyInterface):
                 # If we have a position, check TP/SL and decide whether to close
                 if asset in assets_with_positions:
                     # Get position data from context to check PnL
-                    positions_data = context_dict.get("positions_data", {}).get("positions", [])
+                    positions_data = context.get("positions_data", {}).get("positions", [])
                     position_info = next((p for p in positions_data if p.get("asset") == asset), None)
                     
                     if position_info:
                         pnl_percent = position_info.get("pnl_percent", 0)
                         # Get scalping TP from trading settings
-                        trading_settings = context_dict.get("trading_settings", {})
                         scalping_tp = trading_settings.get("scalping_tp_percent", 5.0)
                         
                         # Check if TP is reached - if so, close the position
@@ -381,16 +380,17 @@ class ScalpingStrategy(StrategyInterface):
     
     def _create_close_decision(self, asset: str, reason: str, margin_per_position: Optional[float]) -> Dict[str, Any]:
         """Create a decision to close an existing position."""
-        # Determine if we need to buy (close short) or sell (close long)
-        # We'll let the system determine the direction based on existing position
+        # For closing, we need to determine the action based on position side
+        # Since we don't know the side here, we'll use "hold" with a special exit_plan
+        # The main system will handle the actual close based on the position direction
         return {
             "asset": asset,
-            "action": "close",  # System will determine buy/sell based on position
+            "action": "hold",  # Will be converted to buy/sell by main system based on position
             "allocation_usd": 0,  # No new allocation needed for closing
             "rationale": reason,
             "tp_price": 0,
             "sl_price": 0,
-            "exit_plan": reason
+            "exit_plan": f"CLOSE: {reason}"  # Special marker for system to close
         }
     
     def _create_hold_decision(self, asset: str, reason: str) -> Dict[str, Any]:
