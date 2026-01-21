@@ -124,10 +124,24 @@ class ScalpingStrategy(StrategyInterface):
                         
                         # Check if TP is reached - if so, close the position
                         if pnl_percent is not None and pnl_percent >= scalping_tp:
+                            # Get position side to determine close action
+                            position_side = position_info.get("side")
+                            # Fallback: check active_trades if side not in position_info
+                            if not position_side:
+                                active_trade = positions_by_asset.get(asset)
+                                if active_trade:
+                                    is_long = active_trade.get("is_long", True)
+                                    position_side = "long" if is_long else "short"
+                                else:
+                                    position_side = "long"  # Default to long if unknown
+                            
+                            is_long = position_side == "long"
+                            # Close action: sell for long positions, buy for short positions
+                            close_action = "sell" if is_long else "buy"
                             decision = self._create_close_decision(
                                 asset,
                                 f"Scalping TP reached: {pnl_percent:.2f}% >= {scalping_tp}% - taking profit",
-                                margin_per_position
+                                close_action
                             )
                         else:
                             decision = self._create_hold_decision(
@@ -378,19 +392,22 @@ class ScalpingStrategy(StrategyInterface):
             "rationale": rationale
         }
     
-    def _create_close_decision(self, asset: str, reason: str, margin_per_position: Optional[float]) -> Dict[str, Any]:
-        """Create a decision to close an existing position."""
-        # For closing, we need to determine the action based on position side
-        # Since we don't know the side here, we'll use "hold" with a special exit_plan
-        # The main system will handle the actual close based on the position direction
+    def _create_close_decision(self, asset: str, reason: str, close_action: str) -> Dict[str, Any]:
+        """Create a decision to close an existing position.
+        
+        Args:
+            asset: Asset ticker
+            reason: Reason for closing (e.g., "TP reached")
+            close_action: "sell" for long positions, "buy" for short positions
+        """
         return {
             "asset": asset,
-            "action": "hold",  # Will be converted to buy/sell by main system based on position
+            "action": close_action,  # "sell" to close long, "buy" to close short
             "allocation_usd": 0,  # No new allocation needed for closing
             "rationale": reason,
-            "tp_price": 0,
-            "sl_price": 0,
-            "exit_plan": f"CLOSE: {reason}"  # Special marker for system to close
+            "tp_price": None,
+            "sl_price": None,
+            "exit_plan": f"CLOSE: {reason}"
         }
     
     def _create_hold_decision(self, asset: str, reason: str) -> Dict[str, Any]:
