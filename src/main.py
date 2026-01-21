@@ -72,6 +72,16 @@ logger.addHandler(file_handler)
 logger.addHandler(stdout_handler)
 logger.addHandler(stderr_handler)
 
+# Suppress verbose DEBUG logs from HTTP/2 libraries (httpx, hyper, h2, httpcore)
+# These libraries generate very verbose protocol-level logs that aren't useful for normal operation
+noisy_libraries = [
+    'httpx', 'hyper', 'h2', 'httpcore', 'hpack', 'hstspreload',
+    'urllib3.connectionpool', 'urllib3.util.retry', 'requests.packages.urllib3'
+]
+for lib_name in noisy_libraries:
+    lib_logger = logging.getLogger(lib_name)
+    lib_logger.setLevel(logging.WARNING)  # Only show WARNING and above from these libraries
+
 # Redirect print statements to logging
 # Note: Handlers use original_stdout/stderr, so print() -> logger -> handlers -> original streams (no recursion)
 class PrintToLog:
