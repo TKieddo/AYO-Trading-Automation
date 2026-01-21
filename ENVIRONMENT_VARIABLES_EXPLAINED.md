@@ -135,10 +135,6 @@ SUPABASE_SERVICE_KEY=your_service_role_key
 # Trading Config (can change via dashboard)
 ASSETS=BTC ETH SOL
 INTERVAL=5m
-```
-
----
-
 ## 💡 Pro Tips
 
 1. **Start with minimum required** - Get agent running first
@@ -146,7 +142,6 @@ INTERVAL=5m
 3. **TAAPI is optional** - Agent works fine without it
 4. **Use SUPABASE_SERVICE_KEY** - Better than SUPABASE_KEY for server-side (bypasses RLS)
 
----
 
 ## 🆘 Troubleshooting
 
