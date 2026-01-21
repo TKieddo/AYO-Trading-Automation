@@ -45,23 +45,24 @@ file_handler.setLevel(logging.DEBUG)
 file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 file_handler.setFormatter(file_formatter)
 
-# Railway logging fix: Route INFO/DEBUG to stdout, WARNING/ERROR to stderr
+# Railway logging fix: Route INFO/DEBUG/WARNING to stdout, ERROR/CRITICAL to stderr
 # This ensures Railway correctly classifies log levels instead of marking everything as error
 # Railway treats: stdout -> "info", stderr -> "error"
-class InfoFilter(logging.Filter):
-    """Filter to allow only INFO and DEBUG level logs."""
+# WARNING is not an error, so it should go to stdout (shown as "info" in Railway)
+class WarningAndBelowFilter(logging.Filter):
+    """Filter to allow DEBUG, INFO, and WARNING level logs (but not ERROR/CRITICAL)."""
     def filter(self, record):
-        return record.levelno <= logging.INFO
+        return record.levelno <= logging.WARNING
 
-# Handler for INFO/DEBUG logs -> stdout (Railway will classify as "info")
+# Handler for INFO/DEBUG/WARNING logs -> stdout (Railway will classify as "info")
 stdout_handler = logging.StreamHandler(original_stdout)
 stdout_handler.setLevel(logging.DEBUG)
-stdout_handler.addFilter(InfoFilter())
+stdout_handler.addFilter(WarningAndBelowFilter())
 stdout_handler.setFormatter(file_formatter)
 
-# Handler for WARNING/ERROR logs -> stderr (Railway will classify as "error")
+# Handler for ERROR/CRITICAL logs -> stderr (Railway will classify as "error")
 stderr_handler = logging.StreamHandler(original_stderr)
-stderr_handler.setLevel(logging.WARNING)
+stderr_handler.setLevel(logging.ERROR)
 stderr_handler.setFormatter(file_formatter)
 
 # Configure root logger
