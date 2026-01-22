@@ -134,6 +134,7 @@ CONFIG = {
     "enable_trailing_stop": _get_bool("ENABLE_TRAILING_STOP", True),  # Enable trailing stop loss
     "trailing_stop_activation_pct": _get_float("TRAILING_STOP_ACTIVATION_PCT", 5.0),  # Start trailing after X% profit
     "trailing_stop_distance_pct": _get_float("TRAILING_STOP_DISTANCE_PCT", 3.0),  # Keep SL X% below peak profit
+    "trading_enabled": _get_bool("TRADING_ENABLED", True),  # Enable/disable trading (when False, skips new entries but still monitors/closes positions)
     "max_position_hold_hours": _get_float("MAX_POSITION_HOLD_HOURS", 24.0),  # Maximum hours to hold a position
     "enable_drawdown_protection": _get_bool("ENABLE_DRAWDOWN_PROTECTION", True),  # Enable drawdown protection
     "max_drawdown_from_peak_pct": _get_float("MAX_DRAWDOWN_FROM_PEAK_PCT", 5.0),  # Close if profit drops X% from peak

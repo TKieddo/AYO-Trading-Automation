@@ -263,6 +263,14 @@ def main():
             elif exchange_name == "binance":
                 logging.info("💡 Note: Make sure your Binance API keys have Futures trading permissions enabled")
                 logging.info("   If trades fail, check that your API keys have the correct permissions in Binance settings")
+            
+            # Show trading status
+            trading_enabled = CONFIG.get("trading_enabled", True)
+            if trading_enabled:
+                logging.info("✅ TRADING ENABLED: Agent will execute new trades and manage positions")
+            else:
+                logging.info("⏸️  TRADING PAUSED: Agent will monitor positions only (no new entries)")
+                logging.info("   Set TRADING_ENABLED=true in Railway/environment to resume trading")
         except Exception as e:
             logging.error(f"❌ Failed to fetch wallet balance on startup: {e}")
             logging.warning("⚠️  Trading agent will continue, but verify your wallet connection")
@@ -1344,6 +1352,12 @@ def main():
                         import traceback
                         logging.error(f"Error closing position for {asset}: {e}\n{traceback.format_exc()}")
 
+            # Check if trading is enabled (allows pausing new entries while still monitoring positions)
+            trading_enabled = CONFIG.get("trading_enabled", True)
+            if not trading_enabled:
+                add_event("⏸️  TRADING PAUSED: Skipping new trade entries. Still monitoring existing positions for TP/SL.")
+                logging.info("⏸️  Trading is disabled (TRADING_ENABLED=false). Monitoring positions only.")
+            
             # Execute trades for each asset
             for output in outputs.get("trade_decisions", []) if isinstance(outputs, dict) else []:
                 try:
@@ -1356,6 +1370,24 @@ def main():
                     rationale = output.get("rationale", "")
                     if rationale:
                         add_event(f"Decision rationale for {asset}: {rationale}")
+                    
+                    # If trading is disabled, skip new entries but allow closing existing positions
+                    if action in ("buy", "sell") and not trading_enabled:
+                        # Check if this is closing an existing position or opening a new one
+                        existing_position = None
+                        for pos in positions:
+                            if pos.get('symbol') == asset and abs(float(pos.get('quantity', 0))) > 0:
+                                existing_position = pos
+                                break
+                        
+                        # Allow closing existing positions (safety), but block new entries
+                        if not existing_position:
+                            add_event(f"⏸️  SKIPPED {asset} {action.upper()}: Trading is paused. Only closing existing positions allowed.")
+                            continue
+                        else:
+                            # This is closing an existing position - allow it for safety
+                            add_event(f"✅ ALLOWED {asset} {action.upper()}: Closing existing position (trading paused but position management active)")
+                    
                     if action in ("buy", "sell"):
                         is_buy = action == "buy"
                         llm_alloc_usd = float(output.get("allocation_usd", 0.0))
