@@ -1044,6 +1044,19 @@ def main():
                 except Exception:
                     pass
                 
+                # Convert to float immediately (values from JSON may be strings)
+                try:
+                    if entry_price:
+                        entry_price = float(entry_price)
+                    if tp_price:
+                        tp_price = float(tp_price)
+                    if sl_price:
+                        sl_price = float(sl_price)
+                except (ValueError, TypeError) as e:
+                    logging.warning(f"Could not convert prices to float for {asset}: entry_price={entry_price}, tp_price={tp_price}, sl_price={sl_price}, error={e}")
+                    if not entry_price or entry_price <= 0:
+                        continue
+                
                 # Calculate current PNL percentage
                 unrealized_pnl = pos.get('unrealized_pnl') or pos.get('pnl') or 0
                 if not entry_price or entry_price <= 0:
@@ -1089,6 +1102,9 @@ def main():
                             opened_at = datetime.fromisoformat(opened_at_str.replace('Z', '+00:00'))
                         else:
                             opened_at = datetime.fromisoformat(opened_at_str)
+                        # Ensure opened_at is timezone-aware (UTC)
+                        if opened_at.tzinfo is None:
+                            opened_at = opened_at.replace(tzinfo=timezone.utc)
                         hours_open = (datetime.now(timezone.utc) - opened_at).total_seconds() / 3600
                         
                         if hours_open >= max_hold_hours:
@@ -1150,6 +1166,9 @@ def main():
                                 opened_at = datetime.fromisoformat(opened_at_str.replace('Z', '+00:00'))
                             else:
                                 opened_at = datetime.fromisoformat(opened_at_str)
+                            # Ensure opened_at is timezone-aware (UTC)
+                            if opened_at.tzinfo is None:
+                                opened_at = opened_at.replace(tzinfo=timezone.utc)
                             hours_open = (datetime.now(timezone.utc) - opened_at).total_seconds() / 3600
                             
                             # Only auto-close if it's been losing for a while (at least 1 hour) to give it time to recover
@@ -1237,12 +1256,20 @@ def main():
                 # Check if this is a scalping trade (TP around 5%)
                 is_scalping_trade = False
                 if tp_price and entry_price:
-                    if is_long:
-                        tp_percent_from_entry = ((tp_price - entry_price) / entry_price) * 100
-                    else:
-                        tp_percent_from_entry = ((entry_price - tp_price) / entry_price) * 100
-                    # Scalping trades typically have TP around 5% (4-6% range)
-                    is_scalping_trade = 4.0 <= tp_percent_from_entry <= 6.0
+                    # Ensure tp_price and entry_price are floats (may come from JSON as strings)
+                    try:
+                        tp_price_float = float(tp_price) if tp_price else None
+                        entry_price_float = float(entry_price) if entry_price else None
+                        if tp_price_float and entry_price_float:
+                            if is_long:
+                                tp_percent_from_entry = ((tp_price_float - entry_price_float) / entry_price_float) * 100
+                            else:
+                                tp_percent_from_entry = ((entry_price_float - tp_price_float) / entry_price_float) * 100
+                            # Scalping trades typically have TP around 5% (4-6% range)
+                            is_scalping_trade = 4.0 <= tp_percent_from_entry <= 6.0
+                    except (ValueError, TypeError) as e:
+                        logging.debug(f"Could not calculate TP percent for {asset}: tp_price={tp_price}, entry_price={entry_price}, error={e}")
+                        is_scalping_trade = False
                 
                 # SCALPING STRATEGY: Close immediately at 5% profit
                 if is_scalping_trade and pnl_percent >= 5.0:
@@ -1259,10 +1286,17 @@ def main():
                         # Check if TP is more than 20% away - if so, take profit now
                         if tp_price:
                             tp_percent = 0.0
-                            if is_long:
-                                tp_percent = ((tp_price - entry_price) / entry_price) * 100
-                            else:
-                                tp_percent = ((entry_price - tp_price) / entry_price) * 100
+                            try:
+                                tp_price_float = float(tp_price) if tp_price else None
+                                entry_price_float = float(entry_price) if entry_price else None
+                                if tp_price_float and entry_price_float:
+                                    if is_long:
+                                        tp_percent = ((tp_price_float - entry_price_float) / entry_price_float) * 100
+                                    else:
+                                        tp_percent = ((entry_price_float - tp_price_float) / entry_price_float) * 100
+                            except (ValueError, TypeError) as e:
+                                logging.debug(f"Could not calculate TP percent for {asset} (trend check): tp_price={tp_price}, entry_price={entry_price}, error={e}")
+                                tp_percent = 0.0
                             
                             if tp_percent > 20.0:  # TP is more than 20% away
                                 should_take_profit = True
