@@ -356,20 +356,14 @@ class PairHunter:
         return min(score, 40)
 
 
-# Convenience function for main.py
-def get_best_pairs(exchange_client, top_n: int = 5, min_volatility: float = 2.0) -> List[str]:
-    """Get best trading pairs for current session"""
+# Convenience function for main.py - ASYNC version
+async def get_best_pairs(exchange_client, top_n: int = 5, min_volatility: float = 2.0) -> List[str]:
+    """Get best trading pairs for current session (async)"""
     hunter = PairHunter(exchange_client, top_n=top_n)
-    
-    # Run async in sync context
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If already in async context, create task
-            future = asyncio.ensure_future(hunter.hunt_pairs(min_volatility=min_volatility))
-            return future.result()
-        else:
-            return loop.run_until_complete(hunter.hunt_pairs(min_volatility=min_volatility))
-    except RuntimeError:
-        # No event loop, create new one
-        return asyncio.run(hunter.hunt_pairs(min_volatility=min_volatility))
+    return await hunter.hunt_pairs(min_volatility=min_volatility)
+
+# Sync version for backward compatibility
+def get_best_pairs_sync(exchange_client, top_n: int = 5, min_volatility: float = 2.0) -> List[str]:
+    """Get best trading pairs - synchronous wrapper"""
+    hunter = PairHunter(exchange_client, top_n=top_n)
+    return asyncio.run(hunter.hunt_pairs(min_volatility=min_volatility))

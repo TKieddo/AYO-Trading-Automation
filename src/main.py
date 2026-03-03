@@ -961,11 +961,20 @@ def main():
                                 positions_assets.add(asset)
                         
                         # Hunt for new opportunities
-                        hunted_assets = await get_best_pairs(
-                            hyperliquid, 
-                            top_n=pair_hunter_top_n,
-                            min_volatility=2.0
-                        )
+                        try:
+                            hunted_assets = await get_best_pairs(
+                                hyperliquid, 
+                                top_n=pair_hunter_top_n,
+                                min_volatility=2.0
+                            )
+                        except Exception as hunt_error:
+                            logger.warning(f"Pair Hunter failed: {hunt_error}. Using fallback.")
+                            hunted_assets = []  # Empty list triggers fallback
+                        
+                        # Validate result
+                        if not hunted_assets or not isinstance(hunted_assets, list):
+                            logger.warning(f"Pair Hunter returned invalid result: {hunted_assets}. Using fallback.")
+                            hunted_assets = []
                         
                         # Merge: Positions + Fresh hunts (positions take priority)
                         merged_assets = list(positions_assets) + [a for a in hunted_assets if a not in positions_assets]
