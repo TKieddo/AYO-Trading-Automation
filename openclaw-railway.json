@@ -1,0 +1,30 @@
+{
+  "gateway": {
+    "port": 18789,
+    "mode": "remote",
+    "bind": "0.0.0.0",
+    "auth": {
+      "mode": "token",
+      "token": "1044c265b0d10df74170c2bcd292ac239fd5035820b292f6"
+    }
+  },
+  "plugins": {
+    "entries": {
+      "whatsapp": {
+        "enabled": true
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "pollinations/kimi",
+        "fallbacks": [
+          "pollinations/deepseek",
+          "pollinations/glm"
+        ]
+      },
+      "workspace": "/app/workspace"
+    }
+  }
+}

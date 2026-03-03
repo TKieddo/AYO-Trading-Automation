@@ -648,6 +648,7 @@ def main():
             scalping_sl_percent = trading_settings.get("scalping_sl_percent", 5.0)
             take_profit_strict_enforcement = trading_settings.get("take_profit_strict_enforcement", False)
             stop_loss_usd = trading_settings.get("stop_loss_usd")  # Optional: stop loss in USD (e.g., -$18)
+            enable_stop_loss_orders = trading_settings.get("enable_stop_loss_orders", True)  # Enable automatic SL orders on exchange
             # Position sizing settings (target_profit_per_1pct_move, max_positions, position_sizing_mode) are in trading_settings dict
             # These come from database or .env file (TARGET_PROFIT_PER_1PCT_MOVE, MAX_POSITIONS, POSITION_SIZING_MODE)
             
@@ -1194,28 +1195,31 @@ def main():
                             sl_price = new_sl_price
                             add_event(f"📈 Trailing stop updated for {asset}: SL moved to ${sl_price:.4f} (profit: {pnl_percent:.1f}%)")
                             
-                            # Update SL order on exchange
-                            try:
-                                # Cancel old SL order if exists
-                                if active_trade_record and active_trade_record.get('sl_oid'):
-                                    try:
-                                        await hyperliquid.cancel_order(asset, active_trade_record.get('sl_oid'))
-                                    except Exception:
-                                        pass
-                                
-                                # Place new trailing SL order
-                                sl_order = await hyperliquid.place_stop_loss(asset, is_long, position_size, sl_price)
-                                sl_oids = hyperliquid.extract_oids(sl_order) if hasattr(hyperliquid, 'extract_oids') else []
-                                sl_oid = sl_oids[0] if sl_oids else None
-                                
-                                # Update active trade record
-                                if active_trade_record:
-                                    active_trade_record['sl_oid'] = sl_oid
-                                    active_trade_record['sl_price'] = sl_price
-                                
-                                add_event(f"✅ Trailing SL order placed for {asset} at ${sl_price:.4f}")
-                            except Exception as e:
-                                add_event(f"⚠️  Could not update trailing SL for {asset}: {e}")
+                            # Update SL order on exchange (if enabled)
+                            if enable_stop_loss_orders:
+                                try:
+                                    # Cancel old SL order if exists
+                                    if active_trade_record and active_trade_record.get('sl_oid'):
+                                        try:
+                                            await hyperliquid.cancel_order(asset, active_trade_record.get('sl_oid'))
+                                        except Exception:
+                                            pass
+                                    
+                                    # Place new trailing SL order
+                                    sl_order = await hyperliquid.place_stop_loss(asset, is_long, position_size, sl_price)
+                                    sl_oids = hyperliquid.extract_oids(sl_order) if hasattr(hyperliquid, 'extract_oids') else []
+                                    sl_oid = sl_oids[0] if sl_oids else None
+                                    
+                                    # Update active trade record
+                                    if active_trade_record:
+                                        active_trade_record['sl_oid'] = sl_oid
+                                        active_trade_record['sl_price'] = sl_price
+                                    
+                                    add_event(f"✅ Trailing SL order placed for {asset} at ${sl_price:.4f}")
+                                except Exception as e:
+                                    add_event(f"⚠️  Could not update trailing SL for {asset}: {e}")
+                            else:
+                                add_event(f"📍 Trailing SL updated for {asset} (exchange SL orders disabled)")
                     else:  # short position
                         new_sl_price = current_price * (1 + trailing_distance_pct / 100)
                         # Only update if new SL is lower than current SL (or no SL set)
@@ -1224,28 +1228,31 @@ def main():
                             sl_price = new_sl_price
                             add_event(f"📈 Trailing stop updated for {asset}: SL moved to ${sl_price:.4f} (profit: {pnl_percent:.1f}%)")
                             
-                            # Update SL order on exchange
-                            try:
-                                # Cancel old SL order if exists
-                                if active_trade_record and active_trade_record.get('sl_oid'):
-                                    try:
-                                        await hyperliquid.cancel_order(asset, active_trade_record.get('sl_oid'))
-                                    except Exception:
-                                        pass
-                                
-                                # Place new trailing SL order
-                                sl_order = await hyperliquid.place_stop_loss(asset, is_long, position_size, sl_price)
-                                sl_oids = hyperliquid.extract_oids(sl_order) if hasattr(hyperliquid, 'extract_oids') else []
-                                sl_oid = sl_oids[0] if sl_oids else None
-                                
-                                # Update active trade record
-                                if active_trade_record:
-                                    active_trade_record['sl_oid'] = sl_oid
-                                    active_trade_record['sl_price'] = sl_price
-                                
-                                add_event(f"✅ Trailing SL order placed for {asset} at ${sl_price:.4f}")
-                            except Exception as e:
-                                add_event(f"⚠️  Could not update trailing SL for {asset}: {e}")
+                            # Update SL order on exchange (if enabled)
+                            if enable_stop_loss_orders:
+                                try:
+                                    # Cancel old SL order if exists
+                                    if active_trade_record and active_trade_record.get('sl_oid'):
+                                        try:
+                                            await hyperliquid.cancel_order(asset, active_trade_record.get('sl_oid'))
+                                        except Exception:
+                                            pass
+                                    
+                                    # Place new trailing SL order
+                                    sl_order = await hyperliquid.place_stop_loss(asset, is_long, position_size, sl_price)
+                                    sl_oids = hyperliquid.extract_oids(sl_order) if hasattr(hyperliquid, 'extract_oids') else []
+                                    sl_oid = sl_oids[0] if sl_oids else None
+                                    
+                                    # Update active trade record
+                                    if active_trade_record:
+                                        active_trade_record['sl_oid'] = sl_oid
+                                        active_trade_record['sl_price'] = sl_price
+                                    
+                                    add_event(f"✅ Trailing SL order placed for {asset} at ${sl_price:.4f}")
+                                except Exception as e:
+                                    add_event(f"⚠️  Could not update trailing SL for {asset}: {e}")
+                            else:
+                                add_event(f"📍 Trailing SL updated for {asset} (exchange SL orders disabled)")
                 
                 # SMART PROFIT-TAKING: Adjust TP dynamically based on current profit
                 # Consider fees (~0.04% per entry/exit = ~0.08% round trip)
@@ -1693,8 +1700,8 @@ def main():
                                     else:
                                         add_event(f"❌ Failed to place TP for {asset}: {e}")
                             
-                            # Place SL order
-                            if sl_price:
+                            # Place SL order (if enabled)
+                            if sl_price and trading_settings.get('enable_stop_loss_orders', True):
                                 try:
                                     sl_order = await hyperliquid.place_stop_loss(asset, is_buy, actual_position_size, sl_price)
                                     sl_oids = hyperliquid.extract_oids(sl_order)
@@ -2937,8 +2944,11 @@ def main():
                     logging.warning(f"⚠️  Error placing TP order for {asset}: {e}")
                 
                 try:
-                    # Place stop loss order
-                    sl_result = await hyperliquid.place_stop_loss(asset, is_buy, position_size, sl_price)
+                    # Place stop loss order (if enabled)
+                    if trading_settings.get('enable_stop_loss_orders', True):
+                        sl_result = await hyperliquid.place_stop_loss(asset, is_buy, position_size, sl_price)
+                    else:
+                        sl_result = {"disabled": True}
                     if isinstance(sl_result, dict):
                         # Aster format: direct orderId
                         if "orderId" in sl_result:

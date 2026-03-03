@@ -68,6 +68,7 @@ async def get_trading_settings() -> Dict[str, Any]:
                         # Stop loss enforcement
                         "stop_loss_usd": data.get("stop_loss_usd"),  # Optional: stop loss in USD (e.g., -18)
                         "take_profit_strict_enforcement": bool(data.get("take_profit_strict_enforcement", False)),
+                        "enable_stop_loss_orders": bool(data.get("enable_stop_loss_orders", CONFIG.get("enable_stop_loss_orders", True))),
                         # Per-asset overrides
                         "asset_leverage_overrides": asset_leverage_overrides,
                         "asset_timeframes": asset_timeframes,
@@ -127,6 +128,7 @@ async def get_trading_settings() -> Dict[str, Any]:
         # Stop loss enforcement
         "stop_loss_usd": CONFIG.get("stop_loss_usd"),  # Optional: stop loss in USD (e.g., -18)
         "take_profit_strict_enforcement": CONFIG.get("take_profit_strict_enforcement", False),
+        "enable_stop_loss_orders": CONFIG.get("enable_stop_loss_orders", True),
         # Per-asset overrides
         "asset_leverage_overrides": asset_leverage_overrides,
         "asset_timeframes": {},  # Would need to parse from env if needed

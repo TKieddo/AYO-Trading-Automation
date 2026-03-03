@@ -105,6 +105,7 @@ CONFIG = {
     "default_leverage": _get_int("DEFAULT_LEVERAGE", 10),  # Default leverage (will be capped by asset max)
     "take_profit_percent": _get_int("TAKE_PROFIT_PERCENT", 5),  # Take profit percentage (e.g., 5 = 5%)
     "stop_loss_percent": _get_int("STOP_LOSS_PERCENT", 3),  # Stop loss percentage (e.g., 3 = 3%)
+    "enable_stop_loss_orders": _get_bool("ENABLE_STOP_LOSS_ORDERS", True),  # Enable automatic stop-loss orders on exchange (disable if exchange API rejects SL orders)
     # Position sizing (fallback when database unavailable)
     "target_profit_per_1pct_move": _get_float("TARGET_PROFIT_PER_1PCT_MOVE", 1.0),  # Target profit per 1% price move (e.g., 1.0 = $1 per 1%, 3.0 = $3 per 1%)
     "allocation_per_position": _get_float("ALLOCATION_PER_POSITION"),  # Fixed allocation per position (None = auto)
