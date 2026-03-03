@@ -460,11 +460,23 @@ def main():
     # Initialize webhook notifier for external alerts (WhatsApp, Discord, etc.)
     webhook_url = CONFIG.get("webhook_url")
     enable_webhook = CONFIG.get("enable_webhook_notifications", False)
-    webhook_notifier = WebhookNotifier(webhook_url if enable_webhook else None)
-    if enable_webhook and webhook_url:
-        add_event("🔔 Notifications enabled: trade events will be sent to configured webhook/Telegram bridge.")
-    elif enable_webhook and not webhook_url:
-        add_event("⚠️ Notifications enabled but WEBHOOK_URL is missing. Alerts will NOT be delivered.")
+    telegram_bot_token = CONFIG.get("telegram_bot_token")
+    telegram_chat_id = CONFIG.get("telegram_chat_id")
+    webhook_notifier = WebhookNotifier(
+        webhook_url if enable_webhook else None,
+        telegram_bot_token=telegram_bot_token if enable_webhook else None,
+        telegram_chat_id=telegram_chat_id if enable_webhook else None,
+    )
+    has_native_telegram = bool(telegram_bot_token and telegram_chat_id)
+    if enable_webhook and (webhook_url or has_native_telegram):
+        channel_desc = []
+        if webhook_url:
+            channel_desc.append("WEBHOOK_URL")
+        if has_native_telegram:
+            channel_desc.append("native Telegram")
+        add_event(f"🔔 Notifications enabled via {', '.join(channel_desc)}.")
+    elif enable_webhook and not webhook_url and not has_native_telegram:
+        add_event("⚠️ Notifications enabled but no valid channel configured (set WEBHOOK_URL or TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID).")
     else:
         add_event("🔕 Notifications disabled (ENABLE_WEBHOOK_NOTIFICATIONS=false).")
 

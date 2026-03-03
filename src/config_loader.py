@@ -164,6 +164,8 @@ CONFIG = {
     # Webhook notifications (WhatsApp, Discord, etc.)
     "webhook_url": _get_env("WEBHOOK_URL"),  # URL to POST trade notifications (e.g., Telegram bot, Discord webhook)
     "enable_webhook_notifications": _get_bool("ENABLE_WEBHOOK_NOTIFICATIONS", False),  # Enable webhook alerts
+    "telegram_bot_token": _get_env("TELEGRAM_BOT_TOKEN"),  # Optional native Telegram mode
+    "telegram_chat_id": _get_env("TELEGRAM_CHAT_ID"),  # Optional native Telegram mode
     "position_update_interval": _get_int("POSITION_UPDATE_INTERVAL", 6),  # Send position summary every N cycles (6 × 5min = 30min)
     # API server (DigitalOcean App Platform uses PORT, fallback to APP_PORT/API_PORT/3000)
     "api_host": _get_env("API_HOST", "0.0.0.0"),
