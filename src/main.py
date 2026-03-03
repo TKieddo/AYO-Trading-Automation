@@ -286,9 +286,11 @@ def main():
     active_trades = []  # {'asset','is_long','amount','entry_price','tp_oid','sl_oid','exit_plan'}
     recent_events = deque(maxlen=200)
     diary_path = "diary.jsonl"
+    pair_hunter_stats_path = "pair_hunter_stats.json"
     initial_account_value = None
     # Perp mid-price history sampled each loop (authoritative, avoids spot/perp basis mismatch)
     price_history = {}
+    pair_hunter_stats = {}
 
     logging.info(f"Starting trading agent for assets: {args.assets} at interval: {args.interval}")
 
@@ -296,6 +298,113 @@ def main():
         """Log an informational event and push it into the recent events deque."""
         logging.info(msg)
         recent_events.append({"timestamp": datetime.now(timezone.utc).isoformat(), "message": msg})
+
+    def _load_pair_hunter_stats():
+        """Load persisted pair-hunter performance stats."""
+        nonlocal pair_hunter_stats
+        try:
+            if os.path.exists(pair_hunter_stats_path):
+                with open(pair_hunter_stats_path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    pair_hunter_stats = loaded
+                    add_event(f"📚 Loaded Pair Hunter performance stats for {len(pair_hunter_stats)} assets")
+        except Exception as e:
+            logging.warning(f"Could not load pair_hunter_stats.json: {e}")
+            pair_hunter_stats = {}
+
+    def _save_pair_hunter_stats():
+        """Persist pair-hunter performance stats."""
+        try:
+            with open(pair_hunter_stats_path, "w", encoding="utf-8") as f:
+                json.dump(pair_hunter_stats, f, default=json_default)
+        except Exception as e:
+            logging.warning(f"Could not save pair_hunter_stats.json: {e}")
+
+    def _record_pair_hunter_outcome(asset: str, pnl_usd: float, pnl_percent: float, close_reason: str):
+        """Update win/loss + expectancy metrics for a closed trade asset."""
+        key = (asset or "").upper().strip()
+        if not key:
+            return
+        try:
+            pnl_usd = float(pnl_usd or 0.0)
+        except Exception:
+            pnl_usd = 0.0
+        try:
+            pnl_percent = float(pnl_percent or 0.0)
+        except Exception:
+            pnl_percent = 0.0
+
+        stats = pair_hunter_stats.get(key, {})
+        total_trades = int(stats.get("total_trades", 0) or 0) + 1
+        wins = int(stats.get("wins", 0) or 0) + (1 if pnl_usd > 0 else 0)
+        losses = int(stats.get("losses", 0) or 0) + (1 if pnl_usd <= 0 else 0)
+        total_pnl_usd = float(stats.get("total_pnl_usd", 0.0) or 0.0) + pnl_usd
+        total_pnl_percent = float(stats.get("total_pnl_percent", 0.0) or 0.0) + pnl_percent
+        win_rate = (wins / total_trades) * 100 if total_trades > 0 else 0.0
+        expectancy_usd = total_pnl_usd / total_trades if total_trades > 0 else 0.0
+        expectancy_percent = total_pnl_percent / total_trades if total_trades > 0 else 0.0
+
+        pair_hunter_stats[key] = {
+            "total_trades": total_trades,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": round(win_rate, 2),
+            "total_pnl_usd": round(total_pnl_usd, 4),
+            "total_pnl_percent": round(total_pnl_percent, 4),
+            "expectancy_usd": round(expectancy_usd, 4),
+            "expectancy_percent": round(expectancy_percent, 4),
+            "last_close_reason": close_reason,
+            "last_updated": datetime.now(timezone.utc).isoformat()
+        }
+        _save_pair_hunter_stats()
+        add_event(
+            f"📊 Pair Hunter stats {key}: trades={total_trades}, win_rate={win_rate:.1f}%, "
+            f"expectancy=${expectancy_usd:.2f}/trade"
+        )
+
+    def _rank_hunted_assets_by_performance(hunted_assets: list[str]) -> list[str]:
+        """Re-rank/filter hunted assets using historical trade outcomes."""
+        if not hunted_assets:
+            return hunted_assets
+
+        min_trades = int(CONFIG.get("pair_hunter_perf_min_trades", 3) or 3)
+        filter_min_trades = int(CONFIG.get("pair_hunter_perf_filter_min_trades", 6) or 6)
+        filter_min_win_rate = float(CONFIG.get("pair_hunter_perf_filter_min_win_rate", 25.0) or 25.0)
+        filter_min_expectancy_usd = float(CONFIG.get("pair_hunter_perf_filter_min_expectancy_usd", -1.0) or -1.0)
+
+        filtered_assets = []
+        for asset in hunted_assets:
+            stats = pair_hunter_stats.get(asset, {})
+            total_trades = int(stats.get("total_trades", 0) or 0)
+            win_rate = float(stats.get("win_rate", 0.0) or 0.0)
+            expectancy_usd = float(stats.get("expectancy_usd", 0.0) or 0.0)
+            should_filter = (
+                total_trades >= filter_min_trades
+                and win_rate < filter_min_win_rate
+                and expectancy_usd < filter_min_expectancy_usd
+            )
+            if should_filter:
+                add_event(
+                    f"🚫 Pair Hunter filtered {asset} from hunt list "
+                    f"(trades={total_trades}, win_rate={win_rate:.1f}%, expectancy=${expectancy_usd:.2f})"
+                )
+                continue
+            filtered_assets.append(asset)
+
+        def _rank_tuple(asset: str):
+            stats = pair_hunter_stats.get(asset, {})
+            total_trades = int(stats.get("total_trades", 0) or 0)
+            win_rate = float(stats.get("win_rate", 0.0) or 0.0)
+            expectancy_usd = float(stats.get("expectancy_usd", 0.0) or 0.0)
+            if total_trades < min_trades:
+                return (0, 0.0, 0.0)  # preserve newer/unknown pairs without penalty
+            return (1, win_rate, expectancy_usd)
+
+        ranked = sorted(filtered_assets, key=_rank_tuple, reverse=True)
+        return ranked
+
+    _load_pair_hunter_stats()
 
     # Initialize webhook notifier for external alerts (WhatsApp, Discord, etc.)
     webhook_url = CONFIG.get("webhook_url")
@@ -608,6 +717,8 @@ def main():
                         if not hunted_assets or not isinstance(hunted_assets, list):
                             logger.warning(f"Pair Hunter returned invalid result: {hunted_assets}. Using fallback.")
                             hunted_assets = []
+                        if hunted_assets:
+                            hunted_assets = _rank_hunted_assets_by_performance(hunted_assets)
                         run_loop._last_hunted_assets = hunted_assets
                         run_loop._pair_hunter_counter = 0
                     except Exception as e:
@@ -620,6 +731,15 @@ def main():
                     merged_assets = list(positions_assets) + [a for a in hunted_assets if a not in positions_assets]
                     decision_assets = merged_assets[:pair_hunter_max_analyze_assets]
                     add_event(f"🏆 PAIR HUNTER: top setups ({len(hunted_assets)}): {', '.join(hunted_assets)}")
+                    scoreboard = []
+                    for sym in hunted_assets[:5]:
+                        s = pair_hunter_stats.get(sym, {})
+                        if s:
+                            scoreboard.append(
+                                f"{sym}(wr={float(s.get('win_rate', 0.0)):.0f}%, exp=${float(s.get('expectancy_usd', 0.0)):.2f}, n={int(s.get('total_trades', 0) or 0)})"
+                            )
+                    if scoreboard:
+                        add_event(f"📈 Pair Hunter scorecard: {', '.join(scoreboard)}")
                     if positions_assets:
                         add_event(f"📊 Monitoring open-position assets: {', '.join(positions_assets)}")
                     try:
@@ -835,6 +955,7 @@ def main():
                             "pnl": pnl_usd,
                             "pnl_percent": pnl_percent
                         }) + "\n")
+                    _record_pair_hunter_outcome(asset, pnl_usd, pnl_percent, "close_stop_loss")
                     
                     # Remove from positions list so AI doesn't see it
                     positions = [p for p in positions if p.get('symbol') != asset]
@@ -1295,6 +1416,7 @@ def main():
                                         "reason": f"Maximum hold time reached ({hours_open:.1f}h)",
                                         "pnl": unrealized_pnl
                                     }) + "\n")
+                                _record_pair_hunter_outcome(asset, unrealized_pnl, pnl_percent, "close_max_hold_time")
                             except Exception as e:
                                 add_event(f"❌ Failed to close {asset} position (max hold time): {e}")
                             continue  # Skip to next position
@@ -1602,6 +1724,8 @@ def main():
                                 "reason": f"{reason} target reached - automatic close",
                                 "pnl": (current_price - float(entry_price or current_price)) * position_size if is_long else (float(entry_price or current_price) - current_price) * position_size
                             }) + "\n")
+                        realized_pnl = (current_price - float(entry_price or current_price)) * position_size if is_long else (float(entry_price or current_price) - current_price) * position_size
+                        _record_pair_hunter_outcome(asset, realized_pnl, pnl_percent, f"close_{reason.lower()}")
                     except Exception as e:
                         add_event(f"❌ Failed to close {asset} position: {e}")
                         import traceback

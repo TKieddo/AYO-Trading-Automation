@@ -53,6 +53,10 @@ npx @railway/cli up
 | `PAIR_HUNTER_REFRESH_INTERVAL` | `5` | Refresh hunt every N cycles (5 cycles × 5 min = 25 min) |
 | `PAIR_HUNTER_MIN_VOLATILITY` | `2.0` | Minimum 24h volatility % to consider |
 | `PAIR_HUNTER_MAX_ANALYZE_ASSETS` | `8` | Max assets passed to LLM per cycle (positions + hunted pairs) |
+| `PAIR_HUNTER_PERF_MIN_TRADES` | `3` | Minimum closed trades before using a pair's performance as ranking weight |
+| `PAIR_HUNTER_PERF_FILTER_MIN_TRADES` | `6` | Minimum closed trades before weak-pair filtering can apply |
+| `PAIR_HUNTER_PERF_FILTER_MIN_WIN_RATE` | `25.0` | Filter hunted pairs below this win rate (with enough history) |
+| `PAIR_HUNTER_PERF_FILTER_MIN_EXPECTANCY_USD` | `-1.0` | Filter hunted pairs with worse expectancy/trade than this |
 
 ---
 
