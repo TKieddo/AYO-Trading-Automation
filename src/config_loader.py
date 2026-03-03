@@ -156,6 +156,9 @@ CONFIG = {
     "pair_hunter_top_n": _get_int("PAIR_HUNTER_TOP_N", 5),  # Number of top pairs to hunt
     "pair_hunter_refresh_interval": _get_int("PAIR_HUNTER_REFRESH_INTERVAL", 5),  # Refresh hunt every N loops
     "pair_hunter_min_volatility": _get_float("PAIR_HUNTER_MIN_VOLATILITY", 2.0),  # Minimum 24h volatility %
+    # Webhook notifications (WhatsApp, Discord, etc.)
+    "webhook_url": _get_env("WEBHOOK_URL"),  # URL to POST trade notifications (e.g., IFTTT, OpenClaw gateway)
+    "enable_webhook_notifications": _get_bool("ENABLE_WEBHOOK_NOTIFICATIONS", False),  # Enable webhook alerts
     # API server (DigitalOcean App Platform uses PORT, fallback to APP_PORT/API_PORT/3000)
     "api_host": _get_env("API_HOST", "0.0.0.0"),
     "api_port": _get_env("PORT") or _get_env("APP_PORT") or _get_env("API_PORT") or "3000",

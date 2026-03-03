@@ -8,6 +8,7 @@ from src.strategies.strategy_factory import StrategyFactory
 from src.indicators.technical_analysis_client import TechnicalAnalysisClient
 from src.config_loader import CONFIG, get_leverage_for_asset
 from src.pair_hunter import PairHunter, get_best_pairs
+from src.webhook_notifier import WebhookNotifier
 import asyncio
 import logging
 import time
@@ -295,6 +296,11 @@ def main():
         """Log an informational event and push it into the recent events deque."""
         logging.info(msg)
         recent_events.append({"timestamp": datetime.now(timezone.utc).isoformat(), "message": msg})
+
+    # Initialize webhook notifier for external alerts (WhatsApp, Discord, etc.)
+    webhook_url = CONFIG.get("webhook_url")
+    enable_webhook = CONFIG.get("enable_webhook_notifications", False)
+    webhook_notifier = WebhookNotifier(webhook_url if enable_webhook else None)
 
     def _build_position_sizing_note(trading_settings: dict, default_leverage: int, per_asset_leverage: dict = None) -> str:
         """Build position sizing note for LLM context - ALWAYS uses margin mode."""
@@ -920,6 +926,15 @@ def main():
                             if positions_assets:
                                 add_event(f"📊 Plus monitoring positions: {', '.join(positions_assets)}")
                             
+                            # Send webhook notification for pair hunter
+                            try:
+                                await webhook_notifier.notify_pair_hunter(
+                                    top_pairs=hunted_assets,
+                                    positions=list(positions_assets)
+                                )
+                            except Exception as e:
+                                logging.debug(f"Webhook pair hunter notification failed: {e}")
+                            
                             # Replace args.assets with merged list for this decision
                             decision_assets = merged_assets[:8]  # Max 8 assets to analyze
                         else:
@@ -1446,6 +1461,22 @@ def main():
                             close_order = await hyperliquid.place_buy_order(asset, position_size, reduce_only=True)
                         add_event(f"✅ Closed {asset} position ({reason}) via {close_action} order - Gains Protected!")
                         
+                        # Send webhook notification for exit
+                        try:
+                            pnl_usd = (current_price - float(entry_price or current_price)) * position_size if is_long else (float(entry_price or current_price) - current_price) * position_size
+                            await webhook_notifier.notify_exit(
+                                asset=asset,
+                                side="LONG" if is_long else "SHORT",
+                                entry_price=float(entry_price or current_price),
+                                exit_price=current_price,
+                                pnl_percent=pnl_percent,
+                                pnl_usd=pnl_usd,
+                                reason=reason,
+                                size=position_size
+                            )
+                        except Exception as e:
+                            logging.debug(f"Webhook exit notification failed: {e}")
+                        
                         # Remove from active trades if present
                         for tr in active_trades[:]:
                             if tr.get('asset') == asset:
@@ -1735,6 +1766,20 @@ def main():
                             except Exception:
                                 continue
                         trade_log.append({"type": action, "price": current_price, "amount": amount, "exit_plan": output["exit_plan"], "filled": filled})
+                        
+                        # Send webhook notification for entry
+                        if position_exists and filled:
+                            try:
+                                await webhook_notifier.notify_entry(
+                                    asset=asset,
+                                    side="LONG" if is_buy else "SHORT",
+                                    price=current_price,
+                                    size=actual_position_size,
+                                    leverage=leverage_to_use,
+                                    reason=output.get("rationale", "")
+                                )
+                            except Exception as e:
+                                logging.debug(f"Webhook entry notification failed: {e}")
                         
                         tp_oid = None
                         sl_oid = None
