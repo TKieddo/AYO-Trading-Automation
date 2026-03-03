@@ -315,13 +315,19 @@ class PairHunter:
 # SIMPLIFIED FUNCTION API (for main.py integration)
 # ═══════════════════════════════════════════════════════════
 
-async def get_best_pairs(exchange_client=None, top_n: int = 7, use_enhanced: bool = True) -> List[str]:
+async def get_best_pairs(
+    exchange_client=None,
+    top_n: int = 7,
+    min_volatility: float = 2.0,
+    use_enhanced: bool = True
+) -> List[str]:
     """
     Simple function to get best trading pairs
     
     Args:
         exchange_client: Exchange client (Hyperliquid/Aster/Binance)
         top_n: Number of pairs to return
+        min_volatility: Minimum volatility filter for basic hunting mode
         use_enhanced: Use Binance-based enhanced hunting if no exchange client
         
     Returns:
@@ -331,11 +337,11 @@ async def get_best_pairs(exchange_client=None, top_n: int = 7, use_enhanced: boo
     if os.getenv('ENABLE_PAIR_HUNTER', 'false').lower() == 'true' and use_enhanced:
         # Use enhanced mode (Binance-based)
         hunter = PairHunter(exchange_client=None, top_n=top_n)
-        return await hunter.hunt_pairs()
+        return await hunter.hunt_pairs(min_volatility=min_volatility)
     elif exchange_client:
         # Use basic mode with exchange client
         hunter = PairHunter(exchange_client, top_n=top_n)
-        return await hunter.hunt_pairs()
+        return await hunter.hunt_pairs(min_volatility=min_volatility)
     else:
         # Fallback to ASSETS
         assets_str = os.getenv('ASSETS', 'BTC ETH SOL BNB ZEC')
