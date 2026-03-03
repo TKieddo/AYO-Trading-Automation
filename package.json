@@ -1,15 +1,10 @@
 {
   "name": "openclaw-gateway",
   "version": "1.0.0",
-  "description": "24/7 OpenClaw Gateway for WhatsApp alerts and monitoring",
   "scripts": {
-    "start": "npx openclaw gateway start",
-    "dev": "npx openclaw gateway start --dev"
+    "start": "npx openclaw@latest gateway start"
   },
   "dependencies": {
     "openclaw": "^2026.2.1"
-  },
-  "engines": {
-    "node": ">=18.0.0"
   }
 }
