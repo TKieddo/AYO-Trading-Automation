@@ -104,8 +104,19 @@ CONFIG = {
     # Trading settings (can be overridden via database/frontend)
     "default_leverage": _get_int("DEFAULT_LEVERAGE", 10),  # Default leverage (will be capped by asset max)
     "take_profit_percent": _get_int("TAKE_PROFIT_PERCENT", 5),  # Take profit percentage (e.g., 5 = 5%)
-    "stop_loss_percent": _get_int("STOP_LOSS_PERCENT", 3),  # Stop loss percentage (e.g., 3 = 3%)
-    "enable_stop_loss_orders": _get_bool("ENABLE_STOP_LOSS_ORDERS", True),  # Enable automatic stop-loss orders on exchange (disable if exchange API rejects SL orders)
+    "stop_loss_percent": _get_int("STOP_LOSS_PERCENT", 8),  # Stop loss percentage - 8% for scalping (was 3%)
+    "enable_stop_loss_orders": _get_bool("ENABLE_STOP_LOSS_ORDERS", False),  # Disabled by default - prevents Binance API errors
+    # Smart profit taking (scalping mode)
+    "enable_smart_profit": _get_bool("ENABLE_SMART_PROFIT", True),
+    "smart_profit_tier1_pct": _get_int("SMART_PROFIT_TIER1_PCT", 7),  # Close 70% at 7%
+    "smart_profit_tier1_size": _get_int("SMART_PROFIT_TIER1_SIZE", 70),
+    "smart_profit_tier2_pct": _get_int("SMART_PROFIT_TIER2_PCT", 12),  # Close 20% at 12%
+    "smart_profit_tier2_size": _get_int("SMART_PROFIT_TIER2_SIZE", 20),
+    "runner_trail_pct": _get_int("RUNNER_TRAIL_PCT", 2),  # Trail last 10% at 2%
+    # Time-based exits
+    "max_position_hold_hours": _get_float("MAX_POSITION_HOLD_HOURS", 0.5),  # 30 min max for scalping
+    "enable_drawdown_protection": _get_bool("ENABLE_DRAWDOWN_PROTECTION", True),
+    "max_drawdown_from_peak_pct": _get_int("MAX_DRAWDOWN_FROM_PEAK_PCT", 3),  # Close if drops 3% from peak profit
     # Position sizing (fallback when database unavailable)
     "target_profit_per_1pct_move": _get_float("TARGET_PROFIT_PER_1PCT_MOVE", 1.0),  # Target profit per 1% price move (e.g., 1.0 = $1 per 1%, 3.0 = $3 per 1%)
     "allocation_per_position": _get_float("ALLOCATION_PER_POSITION"),  # Fixed allocation per position (None = auto)
