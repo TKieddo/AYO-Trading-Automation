@@ -16,6 +16,10 @@ export interface Position {
   entryPrice: number;
   currentPrice: number;
   liquidationPrice: number;
+  tpPrice?: number | null;
+  slPrice?: number | null;
+  tpOid?: string | null;
+  slOid?: string | null;
   unrealizedPnl: number;
   realizedPnl: number;
   leverage?: number; // From Binance API

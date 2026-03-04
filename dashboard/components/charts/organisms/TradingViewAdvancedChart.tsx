@@ -274,16 +274,17 @@ export function TradingViewAdvancedChart({
         }
       );
 
-      // Add stop-loss if available
-      if (position.liquidationPrice) {
+      // Add exchange-confirmed stop-loss if available (fallback to liquidation).
+      const displaySlPrice = position.slPrice ?? position.liquidationPrice;
+      if (displaySlPrice) {
         chartRef.current.createShape?.(
           {
             time: Date.now() - 86400000,
-            price: position.liquidationPrice,
+            price: displaySlPrice,
           },
           {
             time: Date.now() + 86400000,
-            price: position.liquidationPrice,
+            price: displaySlPrice,
           },
           {
             shape: "trend_line",

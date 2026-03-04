@@ -48,7 +48,15 @@ export function TradingCard({ type, currentPrice = 97417.05, onAmountChange, act
 
   // Sync stop loss with selected position
   useEffect(() => {
-    if (selectedPosition && selectedPosition.entryPrice && selectedPosition.liquidationPrice) {
+    if (!selectedPosition || !selectedPosition.entryPrice) return;
+
+    // Prefer exchange-confirmed SL from open reduce-only STOP orders.
+    if (selectedPosition.slPrice && selectedPosition.slPrice > 0) {
+      setStopLoss(selectedPosition.slPrice.toFixed(2));
+      return;
+    }
+
+    if (selectedPosition.liquidationPrice) {
       // Calculate stop loss percentage from entry to liquidation
       const percentFromEntry = ((selectedPosition.liquidationPrice - selectedPosition.entryPrice) / selectedPosition.entryPrice) * 100;
       
@@ -71,7 +79,15 @@ export function TradingCard({ type, currentPrice = 97417.05, onAmountChange, act
 
   // Sync take profit with selected position
   useEffect(() => {
-    if (selectedPosition && selectedPosition.entryPrice && selectedPosition.currentPrice) {
+    if (!selectedPosition || !selectedPosition.entryPrice) return;
+
+    // Prefer exchange-confirmed TP from open reduce-only TP orders.
+    if (selectedPosition.tpPrice && selectedPosition.tpPrice > 0) {
+      setTakeProfit(selectedPosition.tpPrice.toFixed(2));
+      return;
+    }
+
+    if (selectedPosition.currentPrice) {
       // Calculate current profit percentage
       const profitPercent = ((selectedPosition.currentPrice - selectedPosition.entryPrice) / selectedPosition.entryPrice) * 100;
       

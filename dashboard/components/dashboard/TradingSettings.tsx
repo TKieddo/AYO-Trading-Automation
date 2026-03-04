@@ -45,6 +45,7 @@ interface TradingSettings {
   next_public_base_url: string;
   stop_loss_usd: number | null;
   take_profit_strict_enforcement: boolean;
+  enable_stop_loss_orders: boolean;
 }
 
 export function TradingSettings() {
@@ -85,6 +86,7 @@ export function TradingSettings() {
     next_public_base_url: "http://localhost:3001",
     stop_loss_usd: null,
     take_profit_strict_enforcement: false,
+    enable_stop_loss_orders: true,
   });
   const [strategies, setStrategies] = useState<any[]>([]);
   const [loadingStrategies, setLoadingStrategies] = useState(false);
@@ -149,6 +151,7 @@ export function TradingSettings() {
           auto_strategy_cache_minutes: data.auto_strategy_cache_minutes ?? 0,
           stop_loss_usd: data.stop_loss_usd ?? null,
           take_profit_strict_enforcement: data.take_profit_strict_enforcement ?? false,
+          enable_stop_loss_orders: data.enable_stop_loss_orders ?? true,
           asset_leverage_overrides: data.asset_leverage_overrides || {},
           asset_timeframes: data.asset_timeframes || {},
           llm_model: data.llm_model || "deepseek-reasoner",
@@ -557,6 +560,23 @@ export function TradingSettings() {
                 If set, position will close when EITHER percentage OR USD threshold is breached. Leave empty to use percentage only.
               </p>
             </div>
+
+            <div className="flex items-center gap-2 pt-2">
+              <input
+                type="checkbox"
+                id="enable_stop_loss_orders"
+                checked={settings.enable_stop_loss_orders}
+                onChange={(e) => setSettings({ ...settings, enable_stop_loss_orders: e.target.checked })}
+                className="w-4 h-4 text-[#c0e156] focus:ring-[#c0e156] rounded"
+              />
+              <Label htmlFor="enable_stop_loss_orders" className="font-semibold">
+                Enable Exchange Stop-Loss Orders
+              </Label>
+            </div>
+            <p className="text-xs text-slate-500 ml-6">
+              If checked, bot places real STOP orders on the exchange after entries and updates them for trailing protection.
+              If unchecked, stop loss is enforced only by bot cycle checks (higher between-cycle risk).
+            </p>
 
             <div className="flex items-center gap-2 pt-2">
               <input

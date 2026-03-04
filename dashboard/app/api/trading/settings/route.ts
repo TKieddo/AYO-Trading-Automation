@@ -65,6 +65,7 @@ export async function GET() {
       next_public_base_url: "http://localhost:3001",
       stop_loss_usd: null,
       take_profit_strict_enforcement: false,
+      enable_stop_loss_orders: true,
       updated_at: new Date().toISOString(),
     };
 
@@ -129,7 +130,8 @@ export async function POST(req: NextRequest) {
       deepseek_max_tokens,
       next_public_base_url,
       stop_loss_usd,
-      take_profit_strict_enforcement
+      take_profit_strict_enforcement,
+      enable_stop_loss_orders
     } = body;
 
     // Validate inputs
@@ -262,6 +264,7 @@ export async function POST(req: NextRequest) {
     if (next_public_base_url !== undefined) updateData.next_public_base_url = String(next_public_base_url).trim();
     if (stop_loss_usd !== undefined) updateData.stop_loss_usd = stop_loss_usd === null || stop_loss_usd === "" ? null : Number(stop_loss_usd);
     if (take_profit_strict_enforcement !== undefined) updateData.take_profit_strict_enforcement = Boolean(take_profit_strict_enforcement);
+    if (enable_stop_loss_orders !== undefined) updateData.enable_stop_loss_orders = Boolean(enable_stop_loss_orders);
 
     // Upsert settings
     const { data, error } = await supabase

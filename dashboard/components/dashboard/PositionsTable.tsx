@@ -83,6 +83,9 @@ export function PositionsTable() {
                   <th className="text-left py-3 px-4 font-medium text-white/70">
                   Side
                 </th>
+                  <th className="text-center py-3 px-4 font-medium text-white/70">
+                  Protection
+                </th>
                   <th className="text-right py-3 px-4 font-medium text-white/70">
                   Size / Leverage
                 </th>
@@ -104,6 +107,9 @@ export function PositionsTable() {
                 {positions.map((position) => {
                 const isLong = position.side === "long";
                 const isProfit = position.unrealizedPnl >= 0;
+                const hasTp = Boolean(position.tpOid) || (position.tpPrice != null && position.tpPrice > 0);
+                const hasSl = Boolean(position.slOid) || (position.slPrice != null && position.slPrice > 0);
+                const protectionStatus = hasTp && hasSl ? "TP+SL" : hasTp || hasSl ? "Partial" : "Unprotected";
                 
                 // Get raw size (position amount)
                 const rawSize = Math.abs(Number(position.size) || 0);
@@ -176,6 +182,26 @@ export function PositionsTable() {
                         )}
                         {position.side.toUpperCase()}
                       </div>
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <span
+                        className={`inline-flex items-center px-2 py-1 rounded-full text-[11px] font-medium ${
+                          protectionStatus === "TP+SL"
+                            ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30"
+                            : protectionStatus === "Partial"
+                            ? "bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30"
+                            : "bg-red-500/15 text-red-300 ring-1 ring-red-500/30"
+                        }`}
+                        title={
+                          hasTp && hasSl
+                            ? "Both take-profit and stop-loss are active on exchange"
+                            : hasTp || hasSl
+                            ? "Only one protective order is active"
+                            : "No protective orders detected"
+                        }
+                      >
+                        {protectionStatus}
+                      </span>
                     </td>
                     <td className="py-3 px-4 text-right">
                       {/* Display notional value (size in USDT) = leverage * margin */}
