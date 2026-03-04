@@ -746,6 +746,33 @@ def main():
             open_orders_struct = []
             try:
                 open_orders = await hyperliquid.get_open_orders()
+                # Reconcile stale orders: if no live position exists for an asset, clear old TP/SL leftovers.
+                try:
+                    assets_with_positions = set()
+                    for p in positions:
+                        sym = p.get("symbol")
+                        qty = float(p.get("quantity", 0) or 0)
+                        if sym and abs(qty) > 0:
+                            assets_with_positions.add(sym)
+
+                    stale_assets = set()
+                    for o in open_orders or []:
+                        sym = o.get("coin") or o.get("asset") or o.get("symbol")
+                        if not sym:
+                            continue
+                        sym = str(sym).replace("USDT", "").replace("/USDT", "")
+                        if sym not in assets_with_positions:
+                            stale_assets.add(sym)
+
+                    for stale_asset in sorted(stale_assets):
+                        await _safe_cancel_all_orders(stale_asset, "stale-order reconciliation")
+
+                    if stale_assets:
+                        # Refresh snapshot after cancellations so downstream logic sees current state.
+                        open_orders = await hyperliquid.get_open_orders()
+                except Exception as reconcile_err:
+                    logging.debug(f"Stale-order reconciliation skipped: {reconcile_err}")
+
                 for o in open_orders[:50]:
                     open_orders_struct.append({
                         "coin": o.get('coin'),
