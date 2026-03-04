@@ -1049,16 +1049,34 @@ def main():
                     continue
                 
                 # Get position data
-                raw_size = float(pos.get('quantity', 0))
+                raw_size = float(pos.get('quantity', 0) or 0)
                 is_long = raw_size > 0
-                entry_price = pos.get('entry_price') or 0
-                current_price = pos.get('current_price') or 0
-                unrealized_pnl = pos.get('unrealized_pnl') or 0
-                pnl_percent = pos.get('unrealized_pnl_percent') or 0
-                initial_margin = pos.get('initial_margin')
-                
-                if not entry_price or entry_price <= 0 or not current_price or current_price <= 0:
-                    continue
+                entry_price = float(pos.get('entry_price') or 0)
+                current_price = float(pos.get('current_price') or 0)
+                unrealized_pnl = float(pos.get('unrealized_pnl') or 0)
+                initial_margin = float(pos.get('initial_margin') or 0)
+
+                raw_pnl_percent = pos.get('unrealized_pnl_percent')
+                pnl_candidates = []
+                try:
+                    if raw_pnl_percent is not None:
+                        pnl_candidates.append(float(raw_pnl_percent))
+                except Exception:
+                    pass
+
+                # Fallback 1: margin-based ROI%
+                if initial_margin > 0:
+                    pnl_candidates.append((unrealized_pnl / initial_margin) * 100.0)
+
+                # Fallback 2: directional price move%
+                if entry_price > 0 and current_price > 0:
+                    if is_long:
+                        pnl_candidates.append(((current_price - entry_price) / entry_price) * 100.0)
+                    else:
+                        pnl_candidates.append(((entry_price - current_price) / entry_price) * 100.0)
+
+                # Use the most conservative loss estimate so SL cannot be bypassed by bad data.
+                pnl_percent = min(pnl_candidates) if pnl_candidates else 0.0
                 
                 # Determine which strategy is active for this position
                 current_strategy_name = agent.get_name()
@@ -1066,17 +1084,19 @@ def main():
                 
                 # Get stop loss threshold (scalping or regular)
                 effective_sl_percent = scalping_sl_percent if is_scalping else sl_percent
+                # Hard safety cap: never allow losses to run past this backstop.
+                hard_max_loss_cap_percent = float(trading_settings.get("hard_max_loss_cap_percent", 8.0) or 8.0)
+                if hard_max_loss_cap_percent > 0:
+                    effective_sl_percent = min(float(effective_sl_percent or hard_max_loss_cap_percent), hard_max_loss_cap_percent)
                 
                 # Check stop loss in PERCENTAGE
                 sl_breached_percent = False
-                if pnl_percent is not None:
-                    # For long: loss when PnL% is negative and exceeds SL%
-                    # For short: loss when PnL% is negative and exceeds SL%
-                    logging.info(f"📊 Position {asset} PnL check: ${unrealized_pnl:.2f} ({pnl_percent:.2f}%) | SL threshold: -{effective_sl_percent}%")
-                    if pnl_percent <= -effective_sl_percent:
-                        sl_breached_percent = True
-                        add_event(f"🛑 STOP LOSS BREACHED (Percentage) for {asset}: {pnl_percent:.2f}% (threshold: -{effective_sl_percent}%). Closing immediately!")
-                        logging.warning(f"🛑 STOP LOSS BREACHED (Percentage) for {asset}: {pnl_percent:.2f}% <= -{effective_sl_percent}%")
+                # For long/short: breach when effective loss % is below threshold.
+                logging.info(f"📊 Position {asset} PnL check: ${unrealized_pnl:.2f} ({pnl_percent:.2f}%) | SL threshold: -{effective_sl_percent}%")
+                if pnl_percent <= -effective_sl_percent:
+                    sl_breached_percent = True
+                    add_event(f"🛑 STOP LOSS BREACHED (Percentage) for {asset}: {pnl_percent:.2f}% (threshold: -{effective_sl_percent}%). Closing immediately!")
+                    logging.warning(f"🛑 STOP LOSS BREACHED (Percentage) for {asset}: {pnl_percent:.2f}% <= -{effective_sl_percent}%")
                 
                 # Check stop loss in USD (if configured)
                 sl_breached_usd = False
@@ -1096,7 +1116,9 @@ def main():
                         "position_size": position_size,
                         "reason": f"Stop Loss: {pnl_percent:.2f}% / ${unrealized_pnl:.2f}",
                         "pnl_percent": pnl_percent,
-                        "pnl_usd": unrealized_pnl
+                        "pnl_usd": unrealized_pnl,
+                        "entry_price": entry_price,
+                        "current_price": current_price,
                     })
             
             # Close positions that hit stop loss BEFORE AI decision
@@ -1107,6 +1129,8 @@ def main():
                 reason = pos_to_close["reason"]
                 pnl_percent = pos_to_close["pnl_percent"]
                 pnl_usd = pos_to_close["pnl_usd"]
+                entry_price = pos_to_close.get("entry_price", 0)
+                current_price = pos_to_close.get("current_price", 0)
                 
                 try:
                     add_event(f"🛑 FORCE CLOSING {asset} due to stop loss: {reason}")
@@ -1116,6 +1140,7 @@ def main():
                     else:
                         close_order = await hyperliquid.place_buy_order(asset, position_size, reduce_only=True)
                     add_event(f"✅ Force closed {asset} position (Stop Loss) via {close_action} order - Loss: {pnl_percent:.2f}% (${pnl_usd:.2f})")
+                    await _safe_cancel_all_orders(asset, "post-close stop-loss cleanup")
                     
                     # Remove from active trades
                     for tr in active_trades[:]:
@@ -1578,6 +1603,7 @@ def main():
                                 else:
                                     close_order = await hyperliquid.place_buy_order(asset, position_size, reduce_only=True)
                                 add_event(f"✅ Closed {asset} position (max hold time) via {close_action} order")
+                                await _safe_cancel_all_orders(asset, "post-close max-hold cleanup")
                                 
                                 # Remove from active trades
                                 for tr in active_trades[:]:
@@ -1868,6 +1894,7 @@ def main():
                         else:
                             close_order = await hyperliquid.place_buy_order(asset, position_size, reduce_only=True)
                         add_event(f"✅ Closed {asset} position ({reason}) via {close_action} order - Gains Protected!")
+                        await _safe_cancel_all_orders(asset, f"post-close {reason} cleanup")
                         
                         # Send webhook notification for exit
                         try:
@@ -2116,6 +2143,7 @@ def main():
                                         else:
                                             await hyperliquid.place_buy_order(asset, close_size, reduce_only=True)
                                         add_event(f"✅ Closed {asset} due to LLM 'sell' with zero allocation (reduce-only market close)")
+                                        await _safe_cancel_all_orders(asset, "post-close llm-signal cleanup")
                                         # Log closure intent (price captured above in asset_prices)
                                         with open(diary_path, "a") as f:
                                             f.write(json.dumps({
@@ -2218,33 +2246,23 @@ def main():
                             except Exception as e:
                                 add_event(f"⚠️  Could not cancel existing orders for {asset}: {e}")
                             
-                            # Place TP order
-                            if tp_price:
-                                try:
-                                    tp_order = await hyperliquid.place_take_profit(asset, is_buy, actual_position_size, tp_price)
-                                    tp_oids = hyperliquid.extract_oids(tp_order)
-                                    tp_oid = tp_oids[0] if tp_oids else None
-                                    add_event(f"✅ TP placed {asset} at {tp_price:.4f}")
-                                except Exception as e:
-                                    error_msg = str(e)
-                                    if "max stop order limit" in error_msg.lower() or "-4045" in error_msg:
-                                        add_event(f"❌ Failed to place TP for {asset}: Max stop orders reached. Please cancel existing TP/SL orders manually.")
-                                    else:
-                                        add_event(f"❌ Failed to place TP for {asset}: {e}")
-                            
-                            # Place SL order (if enabled)
-                            if sl_price and trading_settings.get('enable_stop_loss_orders', True):
-                                try:
-                                    sl_order = await hyperliquid.place_stop_loss(asset, is_buy, actual_position_size, sl_price)
-                                    sl_oids = hyperliquid.extract_oids(sl_order)
-                                    sl_oid = sl_oids[0] if sl_oids else None
-                                    add_event(f"✅ SL placed {asset} at {sl_price:.4f}")
-                                except Exception as e:
-                                    error_msg = str(e)
-                                    if "max stop order limit" in error_msg.lower() or "-4045" in error_msg:
-                                        add_event(f"❌ Failed to place SL for {asset}: Max stop orders reached. Please cancel existing TP/SL orders manually.")
-                                    else:
-                                        add_event(f"❌ Failed to place SL for {asset}: {e}")
+                            protection = await _ensure_protective_orders(
+                                asset=asset,
+                                is_long=is_buy,
+                                position_size=actual_position_size,
+                                tp_price=tp_price,
+                                sl_price=sl_price,
+                                trading_settings=trading_settings,
+                            )
+                            tp_price = protection.get("tp_price")
+                            sl_price = protection.get("sl_price")
+                            tp_oid = protection.get("tp_oid")
+                            sl_oid = protection.get("sl_oid")
+
+                            if tp_price and not tp_oid:
+                                add_event(f"⚠️  TP for {asset} price is set but order ID is missing. Verify exchange open orders.")
+                            if sl_price and trading_settings.get('enable_stop_loss_orders', True) and not sl_oid:
+                                add_event(f"⚠️  SL for {asset} price is set but order ID is missing. Verify exchange open orders.")
                         # Reconcile: if opposite-side position exists or TP/SL just filled, clear stale active_trades for this asset
                         for existing in active_trades[:]:
                             if existing.get('asset') == asset:
@@ -2435,11 +2453,158 @@ def main():
             logger.error(traceback.format_exc())
             return web.json_response({"error": str(e)}, status=500)
 
+    def _normalize_order_type(order: dict) -> str:
+        """Normalize exchange order type across Binance/Aster payload shapes."""
+        if not isinstance(order, dict):
+            return ""
+        raw = (
+            order.get("orderType")
+            or order.get("type")
+            or order.get("origType")
+            or order.get("order_type")
+            or ""
+        )
+        return str(raw).upper().replace("-", "_")
+
+    def _extract_tp_sl_from_orders(open_orders, asset: str):
+        """Extract best-effort TP/SL trigger prices for an asset from open reduce-only orders."""
+        tp_price = None
+        sl_price = None
+        tp_oid = None
+        sl_oid = None
+        target_asset = str(asset or "").upper().replace("/USDT", "").replace("USDT", "")
+
+        for order in open_orders or []:
+            order_asset = str(order.get("coin") or order.get("asset") or order.get("symbol") or "").upper()
+            order_asset = order_asset.replace("/USDT", "").replace("USDT", "")
+            if order_asset != target_asset:
+                continue
+
+            order_type = _normalize_order_type(order)
+            trigger = order.get("triggerPx")
+            if trigger is None:
+                trigger = order.get("stopPrice")
+            if trigger is None:
+                trigger = order.get("price")
+            try:
+                trigger = float(trigger) if trigger is not None else None
+            except (ValueError, TypeError):
+                trigger = None
+
+            oid = order.get("oid") or order.get("orderId") or order.get("id")
+            if oid is not None:
+                oid = str(oid)
+
+            if order_type.startswith("TAKE_PROFIT"):
+                if trigger is not None:
+                    tp_price = trigger
+                if oid:
+                    tp_oid = oid
+            elif order_type.startswith("STOP"):
+                if trigger is not None:
+                    sl_price = trigger
+                if oid:
+                    sl_oid = oid
+
+        return {
+            "tp_price": tp_price,
+            "sl_price": sl_price,
+            "tp_oid": tp_oid,
+            "sl_oid": sl_oid,
+        }
+
+    async def _safe_cancel_all_orders(asset: str, reason: str = ""):
+        """Best-effort cancel of all open orders for an asset."""
+        try:
+            await hyperliquid.cancel_all_orders(asset)
+            suffix = f" ({reason})" if reason else ""
+            add_event(f"🧹 Cancelled all open orders for {asset}{suffix}")
+        except Exception as e:
+            suffix = f" ({reason})" if reason else ""
+            add_event(f"⚠️  Could not cancel open orders for {asset}{suffix}: {e}")
+
+    async def _ensure_protective_orders(asset: str, is_long: bool, position_size: float, tp_price, sl_price, trading_settings: dict):
+        """Place and verify TP/SL orders with retries, returning confirmed values from open orders."""
+        confirmed_tp = None
+        confirmed_sl = None
+        confirmed_tp_oid = None
+        confirmed_sl_oid = None
+
+        # Attempt placement first (best effort)
+        if tp_price:
+            try:
+                tp_order = await hyperliquid.place_take_profit(asset, is_long, position_size, tp_price)
+                tp_oids = hyperliquid.extract_oids(tp_order) if hasattr(hyperliquid, "extract_oids") else []
+                if tp_oids:
+                    confirmed_tp_oid = tp_oids[0]
+                add_event(f"✅ TP placed {asset} at {float(tp_price):.4f}")
+            except Exception as e:
+                add_event(f"❌ Failed to place TP for {asset}: {e}")
+
+        enable_sl_orders = bool(trading_settings.get("enable_stop_loss_orders", True))
+        if sl_price and enable_sl_orders:
+            try:
+                sl_order = await hyperliquid.place_stop_loss(asset, is_long, position_size, sl_price)
+                sl_oids = hyperliquid.extract_oids(sl_order) if hasattr(hyperliquid, "extract_oids") else []
+                if sl_oids:
+                    confirmed_sl_oid = sl_oids[0]
+                add_event(f"✅ SL placed {asset} at {float(sl_price):.4f}")
+            except Exception as e:
+                add_event(f"❌ Failed to place SL for {asset}: {e}")
+
+        # Verify via open orders and retry missing side once per cycle.
+        for attempt in range(1, 4):
+            try:
+                open_orders = await hyperliquid.get_open_orders()
+                extracted = _extract_tp_sl_from_orders(open_orders, asset)
+                confirmed_tp = extracted.get("tp_price")
+                confirmed_sl = extracted.get("sl_price")
+                confirmed_tp_oid = extracted.get("tp_oid") or confirmed_tp_oid
+                confirmed_sl_oid = extracted.get("sl_oid") or confirmed_sl_oid
+            except Exception as e:
+                add_event(f"⚠️  Could not verify TP/SL orders for {asset} (attempt {attempt}/3): {e}")
+                await asyncio.sleep(1)
+                continue
+
+            missing_tp = bool(tp_price) and not bool(confirmed_tp)
+            missing_sl = bool(sl_price) and enable_sl_orders and not bool(confirmed_sl)
+            if not missing_tp and not missing_sl:
+                break
+
+            add_event(
+                f"⚠️  Protective order check {asset} (attempt {attempt}/3): "
+                f"TP {'missing' if missing_tp else 'ok'}, SL {'missing' if missing_sl else 'ok'}"
+            )
+
+            if missing_tp:
+                try:
+                    await hyperliquid.place_take_profit(asset, is_long, position_size, tp_price)
+                except Exception:
+                    pass
+            if missing_sl:
+                try:
+                    await hyperliquid.place_stop_loss(asset, is_long, position_size, sl_price)
+                except Exception:
+                    pass
+            await asyncio.sleep(1)
+
+        return {
+            "tp_price": confirmed_tp if confirmed_tp is not None else (float(tp_price) if tp_price else None),
+            "sl_price": confirmed_sl if confirmed_sl is not None else (float(sl_price) if sl_price else None),
+            "tp_oid": confirmed_tp_oid,
+            "sl_oid": confirmed_sl_oid,
+        }
+
     async def handle_positions(request):
         """Return current positions as JSON."""
         try:
             logging.debug("Fetching positions from exchange...")
             state = await hyperliquid.get_user_state()
+            try:
+                open_orders_for_positions = await hyperliquid.get_open_orders()
+            except Exception as e:
+                logging.warning(f"Could not fetch open orders for TP/SL enrichment: {e}")
+                open_orders_for_positions = []
             positions_list = []
             
             logging.debug(f"Exchange returned {len(state.get('positions', []))} position(s)")
@@ -2469,6 +2634,7 @@ def main():
                 side = "long" if size > 0 else "short" if size < 0 else None
                 
                 if side and abs(size) > 0:  # Only include non-zero positions
+                    protective_orders = _extract_tp_sl_from_orders(open_orders_for_positions, coin)
                     # ONLY use actual leverage from Binance position data (no fallback to settings/config)
                     leverage = pos.get('leverage')
                     if leverage:
@@ -2553,6 +2719,10 @@ def main():
                         'entry_price': float(entry_px) if entry_px else 0.0,
                         'current_price': float(current_px) if current_px else 0.0,
                         'liquidation_price': float(liquidation_price) if liquidation_price else None,
+                        'tp_price': protective_orders.get('tp_price'),
+                        'sl_price': protective_orders.get('sl_price'),
+                        'tp_oid': protective_orders.get('tp_oid'),
+                        'sl_oid': protective_orders.get('sl_oid'),
                         'unrealized_pnl': float(pnl) if pnl else 0.0,
                         'realized_pnl': 0.0,  # Not available from exchange directly
                         'leverage': leverage,  # ONLY from Binance exchange, never from settings

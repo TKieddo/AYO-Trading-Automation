@@ -345,6 +345,26 @@ class BinanceAPI:
             return order
         except BinanceAPIException as e:
             logger.error(f"Failed to place TP order for {asset}: {e.message} (code: {e.code})")
+            # Some symbols/endpoints reject TP_MARKET on this route (-4120).
+            # Fallback to a reduce-only LIMIT take-profit order.
+            if e.code == -4120:
+                logger.warning(f"TP_MARKET not supported for {asset}, falling back to reduce-only LIMIT TP")
+                try:
+                    fallback_order = await self._retry(
+                        lambda: self.client.futures_create_order(
+                            symbol=symbol,
+                            side=side,
+                            type='LIMIT',
+                            price=tp_price,
+                            timeInForce='GTC',
+                            quantity=quantity,
+                            reduceOnly='true'
+                        )
+                    )
+                    logger.info(f"Placed fallback LIMIT TP for {asset}: {quantity} @ ${tp_price:.2f}")
+                    return fallback_order
+                except Exception as e2:
+                    logger.error(f"Fallback LIMIT TP failed for {asset}: {e2}")
             # If quantity error, try with closePosition
             if e.code in [-2021, -4006]:  # Order would immediately trigger or insufficient position
                 logger.info(f"Retrying TP with closePosition for {asset}")
@@ -456,6 +476,33 @@ class BinanceAPI:
             return order
         except BinanceAPIException as e:
             logger.error(f"Failed to place SL order for {asset}: {e.message} (code: {e.code})")
+            # Some symbols/endpoints reject STOP_MARKET on this route (-4120).
+            # Fallback to a reduce-only STOP order with stop+limit.
+            if e.code == -4120:
+                logger.warning(f"STOP_MARKET not supported for {asset}, falling back to reduce-only STOP order")
+                try:
+                    # Use a tiny limit offset to improve trigger fill probability.
+                    limit_price = sl_price * (0.999 if is_long else 1.001)
+                    if symbol_info:
+                        tick_size = float([f['tickSize'] for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'][0])
+                        limit_price = round(limit_price / tick_size) * tick_size
+                        limit_price = float(f"{limit_price:.{len(str(tick_size).split('.')[-1])}f}")
+                    fallback_order = await self._retry(
+                        lambda: self.client.futures_create_order(
+                            symbol=symbol,
+                            side=side,
+                            type='STOP',
+                            stopPrice=sl_price,
+                            price=limit_price,
+                            timeInForce='GTC',
+                            quantity=quantity,
+                            reduceOnly='true'
+                        )
+                    )
+                    logger.info(f"Placed fallback STOP SL for {asset}: {quantity} stop=${sl_price:.2f} limit=${limit_price:.2f}")
+                    return fallback_order
+                except Exception as e2:
+                    logger.error(f"Fallback STOP SL failed for {asset}: {e2}")
             # If quantity error, try with closePosition
             if e.code in [-2021, -4006]:  # Order would immediately trigger or insufficient position
                 logger.info(f"Retrying SL with closePosition for {asset}")

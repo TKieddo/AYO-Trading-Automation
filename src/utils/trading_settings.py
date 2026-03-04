@@ -2,9 +2,44 @@
 
 import logging
 import aiohttp
+import json
+import os
+import time
 from typing import Dict, Any, Optional
+from pathlib import Path
 from src.config_loader import CONFIG
 from src.utils.position_sizing import calculate_position_size, calculate_profit
+
+CACHE_DIR = Path("settings_cache")
+CACHE_FILE = CACHE_DIR / "trading_settings_cache.json"
+
+
+def _save_cached_trading_settings(settings: Dict[str, Any]) -> None:
+    """Persist latest successful DB settings for outage fallback."""
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "cached_at": int(time.time()),
+            "settings": settings,
+        }
+        with CACHE_FILE.open("w", encoding="utf-8") as f:
+            json.dump(payload, f)
+    except Exception as e:
+        logging.debug(f"Could not save trading settings cache: {e}")
+
+
+def _load_cached_trading_settings() -> Optional[Dict[str, Any]]:
+    """Load cached DB settings when API/database is temporarily unavailable."""
+    try:
+        if not CACHE_FILE.exists():
+            return None
+        with CACHE_FILE.open("r", encoding="utf-8") as f:
+            payload = json.load(f)
+        cached = payload.get("settings")
+        return cached if isinstance(cached, dict) else None
+    except Exception as e:
+        logging.debug(f"Could not load trading settings cache: {e}")
+        return None
 
 
 async def get_trading_settings() -> Dict[str, Any]:
@@ -16,7 +51,6 @@ async def get_trading_settings() -> Dict[str, Any]:
     # ALWAYS try to fetch from database API first (Next.js backend)
     try:
         # Get API URL from env or use default
-        import os
         api_url = os.getenv("NEXT_PUBLIC_API_URL") or os.getenv("NEXT_PUBLIC_BASE_URL") or os.getenv("DASHBOARD_URL") or CONFIG.get("NEXT_PUBLIC_API_URL") or CONFIG.get("next_public_base_url") or "http://localhost:3001"
         async with aiohttp.ClientSession() as session:
             async with session.get(
@@ -30,8 +64,8 @@ async def get_trading_settings() -> Dict[str, Any]:
                     asset_timeframes = data.get("asset_timeframes", {}) or {}
                     
                     logging.info(f"✅ Fetched trading settings from database: leverage={data.get('leverage')}, strategy={data.get('strategy')}, exchange={data.get('exchange')}")
-                    
-                    return {
+
+                    settings = {
                         # Position sizing
                         "leverage": int(data.get("leverage", 10)),
                         "take_profit_percent": float(data.get("take_profit_percent", 5.0)),
@@ -68,6 +102,7 @@ async def get_trading_settings() -> Dict[str, Any]:
                         # Stop loss enforcement
                         "stop_loss_usd": data.get("stop_loss_usd"),  # Optional: stop loss in USD (e.g., -18)
                         "take_profit_strict_enforcement": bool(data.get("take_profit_strict_enforcement", False)),
+                        "hard_max_loss_cap_percent": float(data.get("hard_max_loss_cap_percent", 8.0)),
                         "enable_stop_loss_orders": bool(data.get("enable_stop_loss_orders", CONFIG.get("enable_stop_loss_orders", True))),
                         # Per-asset overrides
                         "asset_leverage_overrides": asset_leverage_overrides,
@@ -76,10 +111,17 @@ async def get_trading_settings() -> Dict[str, Any]:
                         "llm_model": data.get("llm_model", "deepseek-reasoner"),
                         "deepseek_max_tokens": int(data.get("deepseek_max_tokens", 20000)),
                     }
+                    _save_cached_trading_settings(settings)
+                    return settings
                 else:
                     logging.warning(f"⚠️  Failed to fetch trading settings from database (status {resp.status}), using defaults")
     except Exception as e:
         logging.warning(f"⚠️  Could not fetch trading settings from database API: {e}. Using defaults. Make sure dashboard is running.")
+
+    cached_settings = _load_cached_trading_settings()
+    if cached_settings:
+        logging.warning("⚠️  Using cached trading settings from last successful database fetch.")
+        return cached_settings
     
     # Fallback to env/config defaults (ONLY if database is unavailable)
     logging.warning("⚠️  Using .env defaults as fallback. Database settings should be used instead!")
@@ -128,6 +170,7 @@ async def get_trading_settings() -> Dict[str, Any]:
         # Stop loss enforcement
         "stop_loss_usd": CONFIG.get("stop_loss_usd"),  # Optional: stop loss in USD (e.g., -18)
         "take_profit_strict_enforcement": CONFIG.get("take_profit_strict_enforcement", False),
+        "hard_max_loss_cap_percent": float(CONFIG.get("stop_loss_percent", 8.0) or 8.0),
         "enable_stop_loss_orders": CONFIG.get("enable_stop_loss_orders", True),
         # Per-asset overrides
         "asset_leverage_overrides": asset_leverage_overrides,
