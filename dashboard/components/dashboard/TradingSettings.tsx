@@ -16,7 +16,7 @@ interface TradingSettings {
   allocation_per_position: number | null;
   margin_per_position: number | null;
   max_positions: number;
-  position_sizing_mode: "auto" | "fixed" | "target_profit" | "margin";
+  position_sizing_mode: "auto" | "fixed" | "target_profit" | "margin" | "risk";
   active_strategy_ids: string[];
   multi_exchange_mode: boolean;
   assets: string;
@@ -337,20 +337,27 @@ export function TradingSettings() {
               onChange={(e) =>
                 setSettings({
                   ...settings,
-                  position_sizing_mode: e.target.value as "auto" | "fixed" | "target_profit" | "margin",
+                  position_sizing_mode: e.target.value as TradingSettings["position_sizing_mode"],
                 })
               }
               className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#c0e156]"
             >
+              <option value="risk">Risk (Same $ risked per trade from stop distance — recommended)</option>
+              <option value="margin">Margin (Fixed margin × leverage = notional)</option>
               <option value="auto">Auto (Calculate from target profit)</option>
               <option value="target_profit">Target Profit (Calculate from target profit per 1% move)</option>
               <option value="fixed">Fixed (Use fixed allocation per position)</option>
-              <option value="margin">Margin (Specify margin to risk, system calculates notional)</option>
             </select>
             <p className="text-xs text-slate-500">
-              How the AI should calculate position sizes when placing trades.
+              Prefer Risk with ATR exits. Set Risk per trade (USD) in the Adaptive Risk card below.
             </p>
           </div>
+
+          {settings.position_sizing_mode === "risk" && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+              Risk mode is on. Dollar size comes from Adaptive Risk → Risk per trade (USD). Leave that blank and it falls back to % of equity.
+            </p>
+          )}
 
           {(settings.position_sizing_mode === "auto" || settings.position_sizing_mode === "target_profit") && (
             <div className="space-y-2">
