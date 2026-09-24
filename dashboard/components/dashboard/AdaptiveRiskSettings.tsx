@@ -33,20 +33,39 @@ const SECTIONS: Section[] = [
   {
     title: "Exits (volatility-adaptive)",
     blurb:
-      "In ATR mode the stop is a price distance scaled to each pair's recent range, so volatile pairs get room to breathe instead of being stopped by noise. Fixed mode falls back to the legacy take-profit and stop-loss percentages, which are margin ROI figures.",
+      "Exit mode controls the STOP only. Take-profit mode is independent so you can lock scalping profits at a fixed ROI% or $ while ATR still gives the stop enough room.",
     fields: [
       {
         key: "exit_mode",
-        label: "Exit mode",
+        label: "Stop / exit mode",
         type: "select",
-        help: "ATR scales the stop to volatility. Fixed uses the legacy ROI percentages.",
+        help: "ATR scales the stop to volatility. Fixed uses STOP_LOSS_PERCENT as margin ROI.",
         options: [
-          { value: "atr", label: "ATR (volatility-adaptive)" },
-          { value: "fixed", label: "Fixed percentages (legacy)" },
+          { value: "atr", label: "ATR (volatility-adaptive stop)" },
+          { value: "fixed", label: "Fixed stop % (legacy)" },
         ],
       },
+      {
+        key: "tp_mode",
+        label: "Take-profit mode",
+        type: "select",
+        help: "roi_percent = close at TAKE_PROFIT_PERCENT margin ROI. usd = close at TAKE_PROFIT_USD. atr_rr = legacy R-multiple of the ATR stop.",
+        options: [
+          { value: "roi_percent", label: "Margin ROI % (recommended for scalping)" },
+          { value: "usd", label: "Fixed USD profit" },
+          { value: "atr_rr", label: "ATR R:R multiple (legacy)" },
+        ],
+      },
+      {
+        key: "take_profit_usd",
+        label: "Take profit (USD)",
+        type: "number",
+        step: "0.5",
+        nullable: true,
+        help: "Used when take-profit mode is USD. Example: 5 closes at +$5 unrealized.",
+      },
       { key: "sl_atr_mult", label: "Stop = N x ATR", type: "number", step: "0.1", help: "Higher means fewer premature stop-outs but a larger loss when wrong. 2.0-3.0 is typical." },
-      { key: "tp_rr_ratio", label: "Target = N x stop (R:R)", type: "number", step: "0.1", help: "Lower targets fill more often and raise win rate; higher targets pay more per win." },
+      { key: "tp_rr_ratio", label: "Target = N x stop (R:R)", type: "number", step: "0.1", help: "Only used when take-profit mode is ATR R:R." },
       { key: "atr_period", label: "ATR period", type: "number", step: "1", help: "Candles used to measure volatility on the trading timeframe." },
       { key: "min_stop_price_pct", label: "Minimum stop (% of price)", type: "number", step: "0.1", help: "Floor so a quiet pair still gets a stop outside the spread." },
       { key: "max_stop_price_pct", label: "Maximum stop (% of price)", type: "number", step: "0.1", help: "Ceiling so an extreme volatility spike cannot open an unbounded risk." },

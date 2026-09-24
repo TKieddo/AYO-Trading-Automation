@@ -15,6 +15,10 @@ type FieldSpec =
 const ADAPTIVE_RISK_FIELDS: Record<string, FieldSpec> = {
   // Volatility-adaptive exits
   exit_mode: { kind: "enum", values: ["atr", "fixed"] },
+  // Take-profit independent of stop: roi_percent locks at TAKE_PROFIT_PERCENT margin ROI;
+  // usd locks at TAKE_PROFIT_USD; atr_rr keeps legacy R-multiple of the ATR stop.
+  tp_mode: { kind: "enum", values: ["roi_percent", "usd", "atr_rr"] },
+  take_profit_usd: { kind: "num", min: 0.1, max: 100000, nullable: true },
   sl_atr_mult: { kind: "num", min: 0.5, max: 10 },
   tp_rr_ratio: { kind: "num", min: 0.5, max: 10 },
   atr_period: { kind: "int", min: 2, max: 200 },
@@ -219,6 +223,8 @@ export async function GET() {
       enable_stop_loss_orders: true,
       // Volatility-adaptive exits
       exit_mode: "atr",
+      tp_mode: "roi_percent",
+      take_profit_usd: null,
       sl_atr_mult: 2.5,
       tp_rr_ratio: 2.0,
       atr_period: 14,

@@ -44,6 +44,8 @@ interface TradingSettings {
   deepseek_max_tokens: number;
   next_public_base_url: string;
   stop_loss_usd: number | null;
+  take_profit_usd: number | null;
+  tp_mode: "roi_percent" | "usd" | "atr_rr";
   take_profit_strict_enforcement: boolean;
   enable_stop_loss_orders: boolean;
 }
@@ -85,6 +87,8 @@ export function TradingSettings() {
     deepseek_max_tokens: 20000,
     next_public_base_url: "http://localhost:3001",
     stop_loss_usd: null,
+    take_profit_usd: null,
+    tp_mode: "roi_percent",
     take_profit_strict_enforcement: false,
     enable_stop_loss_orders: true,
   });
@@ -150,6 +154,8 @@ export function TradingSettings() {
           scalping_sl_percent: data.scalping_sl_percent ?? 5.0,
           auto_strategy_cache_minutes: data.auto_strategy_cache_minutes ?? 0,
           stop_loss_usd: data.stop_loss_usd ?? null,
+          take_profit_usd: data.take_profit_usd ?? null,
+          tp_mode: (data.tp_mode as TradingSettings["tp_mode"]) || "roi_percent",
           take_profit_strict_enforcement: data.take_profit_strict_enforcement ?? false,
           enable_stop_loss_orders: data.enable_stop_loss_orders ?? true,
           asset_leverage_overrides: data.asset_leverage_overrides || {},
@@ -492,29 +498,85 @@ export function TradingSettings() {
           
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="take_profit" className="font-semibold">
-                Take Profit Percentage
-                <span className="text-xs text-slate-500 font-normal ml-2">(0.1-100%)</span>
+              <Label htmlFor="tp_mode" className="font-semibold">
+                Take Profit Mode
               </Label>
-              <Input
-                id="take_profit"
-                type="number"
-                min="0.1"
-                max="100"
-                step="0.1"
-                value={settings.take_profit_percent}
+              <select
+                id="tp_mode"
+                value={settings.tp_mode}
                 onChange={(e) =>
                   setSettings({
                     ...settings,
-                    take_profit_percent: parseFloat(e.target.value) || 5.0,
+                    tp_mode: e.target.value as TradingSettings["tp_mode"],
                   })
                 }
-                className="w-full"
-              />
+                className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+              >
+                <option value="roi_percent">Margin ROI % (e.g. close at 7% profit)</option>
+                <option value="usd">Fixed USD profit (e.g. close at $5)</option>
+                <option value="atr_rr">ATR R:R multiple (legacy, follows stop distance)</option>
+              </select>
               <p className="text-xs text-slate-500">
-                Percentage above entry price (long) or below entry price (short) to take profit.
+                Stop loss still uses ATR / stop settings unchanged. This only controls when profit is locked.
               </p>
             </div>
+
+            {settings.tp_mode !== "usd" && (
+              <div className="space-y-2">
+                <Label htmlFor="take_profit" className="font-semibold">
+                  Take Profit Percentage
+                  <span className="text-xs text-slate-500 font-normal ml-2">(margin ROI, 0.1-100%)</span>
+                </Label>
+                <Input
+                  id="take_profit"
+                  type="number"
+                  min="0.1"
+                  max="100"
+                  step="0.1"
+                  value={settings.take_profit_percent}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      take_profit_percent: parseFloat(e.target.value) || 5.0,
+                    })
+                  }
+                  className="w-full"
+                />
+                <p className="text-xs text-slate-500">
+                  {settings.tp_mode === "atr_rr"
+                    ? "Only used if ATR target cannot be computed. Prefer switching to Margin ROI % for scalping."
+                    : "Close when margin ROI reaches this %. Example: 7 = lock at +7% on your margin (not price %)."}
+                </p>
+              </div>
+            )}
+
+            {settings.tp_mode === "usd" && (
+              <div className="space-y-2">
+                <Label htmlFor="take_profit_usd" className="font-semibold">
+                  Take Profit (USD)
+                  <span className="text-xs text-slate-500 font-normal ml-2">(e.g. 5 = close at +$5)</span>
+                </Label>
+                <Input
+                  id="take_profit_usd"
+                  type="number"
+                  min="0.1"
+                  max="100000"
+                  step="0.1"
+                  value={settings.take_profit_usd ?? ""}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      take_profit_usd: e.target.value ? parseFloat(e.target.value) : null,
+                    })
+                  }
+                  className="w-full"
+                  placeholder="5"
+                />
+                <p className="text-xs text-slate-500">
+                  Close as soon as unrealized profit reaches this dollar amount. Stop loss is unchanged.
+                </p>
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label htmlFor="stop_loss" className="font-semibold">
@@ -537,7 +599,7 @@ export function TradingSettings() {
                 className="w-full"
               />
               <p className="text-xs text-slate-500">
-                Percentage below entry price (long) or above entry price (short) to stop loss. Higher values allow more room for reversals.
+                Used when Exit Mode is Fixed. With ATR exit mode the stop still comes from volatility (unchanged).
               </p>
             </div>
 

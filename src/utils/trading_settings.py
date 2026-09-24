@@ -91,6 +91,8 @@ async def get_trading_settings() -> Dict[str, Any]:
                         "max_notional_per_position": data.get("max_notional_per_position", CONFIG.get("max_notional_per_position")),
                         # Volatility-adaptive exits
                         "exit_mode": data.get("exit_mode", CONFIG.get("exit_mode", "fixed")),
+                        "tp_mode": data.get("tp_mode", CONFIG.get("tp_mode", "roi_percent")),
+                        "take_profit_usd": data.get("take_profit_usd", CONFIG.get("take_profit_usd")),
                         "sl_atr_mult": float(data.get("sl_atr_mult", CONFIG.get("sl_atr_mult", 2.0))),
                         "tp_rr_ratio": float(data.get("tp_rr_ratio", CONFIG.get("tp_rr_ratio", 2.5))),
                         "atr_period": int(data.get("atr_period", CONFIG.get("atr_period", 14))),
@@ -198,6 +200,8 @@ async def get_trading_settings() -> Dict[str, Any]:
         "max_notional_per_position": CONFIG.get("max_notional_per_position"),
         # Volatility-adaptive exits
         "exit_mode": CONFIG.get("exit_mode", "fixed"),
+        "tp_mode": CONFIG.get("tp_mode", "roi_percent"),
+        "take_profit_usd": CONFIG.get("take_profit_usd"),
         "sl_atr_mult": CONFIG.get("sl_atr_mult", 2.0),
         "tp_rr_ratio": CONFIG.get("tp_rr_ratio", 2.5),
         "atr_period": CONFIG.get("atr_period", 14),

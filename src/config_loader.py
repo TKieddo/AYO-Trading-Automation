@@ -179,9 +179,11 @@ CONFIG = {
     "auto_strategy_cache_minutes": _get_int("AUTO_STRATEGY_CACHE_MINUTES", 0),  # 0 = re-evaluate every cycle, >0 = cache for X minutes
     # Volatility-adaptive exits (ATR-based). When enabled, the fixed TP/SL percentages are
     # replaced by distances derived from recent ATR, so the stop sits outside normal noise.
-    "exit_mode": _get_env("EXIT_MODE", "fixed"),  # "fixed" (legacy TP/SL %) or "atr"
+    "exit_mode": _get_env("EXIT_MODE", "fixed"),  # "fixed" (legacy TP/SL %) or "atr" — controls STOP
+    "tp_mode": _get_env("TP_MODE", "roi_percent"),  # atr_rr | roi_percent | usd
+    "take_profit_usd": _get_float("TAKE_PROFIT_USD"),  # Absolute $ profit lock when tp_mode=usd
     "sl_atr_mult": _get_float("SL_ATR_MULT", 2.0),  # Stop distance = SL_ATR_MULT x ATR%
-    "tp_rr_ratio": _get_float("TP_RR_RATIO", 2.5),  # Target distance = TP_RR_RATIO x stop distance
+    "tp_rr_ratio": _get_float("TP_RR_RATIO", 2.5),  # Only used when tp_mode=atr_rr
     "atr_period": _get_int("ATR_PERIOD", 14),  # ATR lookback for exit sizing
     "min_stop_price_pct": _get_float("MIN_STOP_PRICE_PCT", 0.6),  # Floor on stop distance (% of price)
     "max_stop_price_pct": _get_float("MAX_STOP_PRICE_PCT", 4.0),  # Ceiling on stop distance (% of price)
