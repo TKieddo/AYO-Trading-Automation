@@ -26,7 +26,7 @@ except ImportError:
     httpx = None  # httpx may not be installed, handle gracefully
 from src.utils.formatting import format_number as fmt, format_size as fmt_sz
 from src.utils.prompt_utils import json_default, round_or_none, round_series
-from src.utils.trading_settings import get_trading_settings, get_max_leverage_for_asset, calculate_tp_sl_prices, calculate_allocation_usd, calculate_risk_based_allocation
+from src.utils.trading_settings import get_trading_settings, get_max_leverage_for_asset, calculate_tp_sl_prices, calculate_allocation_usd, calculate_risk_based_allocation, resolve_stop_loss_usd, resolve_max_loss_usd, tighten_sl_to_max_loss
 from src.utils.volatility_stops import ExitPlan, build_exit_plan
 from src.utils import reentry_guard, profit_ladder, risk_governor
 from src.utils.trend_filter import check_trend_agreement
@@ -1403,11 +1403,16 @@ def main():
             scalping_tp_percent = trading_settings.get("scalping_tp_percent", 5.0)
             scalping_sl_percent = trading_settings.get("scalping_sl_percent", 5.0)
             take_profit_strict_enforcement = trading_settings.get("take_profit_strict_enforcement", False)
-            stop_loss_usd = trading_settings.get("stop_loss_usd")  # Optional: stop loss in USD (e.g., -$18)
+            stop_loss_usd = resolve_stop_loss_usd(trading_settings, default=-6.0)
             enable_stop_loss_orders = trading_settings.get("enable_stop_loss_orders", True)  # Enable automatic SL orders on exchange
             agent_manage_exits = bool(trading_settings.get("agent_manage_exits", CONFIG.get("agent_manage_exits", True)))
             if not agent_manage_exits:
                 add_event("🛡️  TP/SL-only close mode active: agent-driven exits are disabled.")
+            add_event(
+                f"🛡️  Max loss ceiling: ${abs(float(stop_loss_usd)):.2f} "
+                f"(risk_per_trade_usd={trading_settings.get('risk_per_trade_usd')}, "
+                f"mode={trading_settings.get('position_sizing_mode')})"
+            )
             # Position sizing settings (target_profit_per_1pct_move, max_positions, position_sizing_mode) are in trading_settings dict
             # These come from database or .env file (TARGET_PROFIT_PER_1PCT_MOVE, MAX_POSITIONS, POSITION_SIZING_MODE)
             
@@ -1432,8 +1437,16 @@ def main():
                 is_long = raw_size > 0
                 entry_price = float(pos.get('entry_price') or 0)
                 current_price = float(pos.get('current_price') or 0)
-                unrealized_pnl = float(pos.get('unrealized_pnl') or 0)
+                unrealized_pnl = float(pos.get('unrealized_pnl') or pos.get('pnl') or 0)
                 initial_margin = float(pos.get('initial_margin') or 0)
+
+                # Prefer more conservative (more negative) of exchange UPL vs price×size estimate.
+                if entry_price > 0 and current_price > 0 and position_size > 0:
+                    derived_pnl = (
+                        (current_price - entry_price) * position_size if is_long
+                        else (entry_price - current_price) * position_size
+                    )
+                    unrealized_pnl = min(unrealized_pnl, derived_pnl)
 
                 # Prefer margin ROI; for stop-loss use the more conservative (more negative) of ROI vs price-move
                 roi_percent = _compute_position_roi_percent(
@@ -1489,10 +1502,9 @@ def main():
                     add_event(f"🛑 STOP LOSS BREACHED (Percentage) for {asset}: {pnl_percent:.2f}% (threshold: -{effective_sl_percent}%). Closing immediately!")
                     logging.warning(f"🛑 STOP LOSS BREACHED (Percentage) for {asset}: {pnl_percent:.2f}% <= -{effective_sl_percent}%")
                 
-                # Check stop loss in USD (if configured)
+                # Check stop loss in USD (always enforced — resolved from risk_per_trade / stop_loss_usd)
                 sl_breached_usd = False
                 if stop_loss_usd is not None and stop_loss_usd < 0:
-                    # stop_loss_usd is negative (e.g., -18 means close if loss >= $18)
                     logging.info(f"📊 Position {asset} USD SL check: ${unrealized_pnl:.2f} vs threshold: ${stop_loss_usd:.2f}")
                     if unrealized_pnl <= stop_loss_usd:
                         sl_breached_usd = True
@@ -2873,6 +2885,13 @@ def main():
                         add_event(f"   📊 Expected profit: ${expected_profit_1_5pct:.2f} on 1% move, ${expected_profit_2pct:.2f} on 2% move")
                         add_event(f"   ✅ Leverage: {leverage_to_use}x (per-asset: {asset_leverage}x, default: {default_leverage}x)")
                         
+                        if is_buy and alloc_usd <= 0:
+                            add_event(
+                                f"⏭️  Skipping buy for {asset}: risk sizing returned $0 "
+                                f"(would exceed max loss or below exchange minimum)."
+                            )
+                            continue
+
                         if alloc_usd <= 0:
                             # If LLM signals 'sell' with zero allocation but we have a position, close it reduce-only
                             if not is_buy and agent_manage_exits:
@@ -2996,6 +3015,23 @@ def main():
                                 if not sl_price:
                                     sl_price = calculated_sl
                                     add_event(f"🛡️  Calculated SL for {asset}: {sl_price:.4f} ({sl_percent}% from entry)")
+
+                            # Cap exchange SL so a fill cannot lose more than Max loss (USD).
+                            try:
+                                max_loss = resolve_max_loss_usd(trading_settings, default=6.0)
+                                capped_sl = tighten_sl_to_max_loss(
+                                    current_price, is_buy, actual_position_size, sl_price, max_loss
+                                )
+                                if capped_sl is not None and (
+                                    sl_price is None or abs(float(capped_sl) - float(sl_price or 0)) > 1e-12
+                                ):
+                                    add_event(
+                                        f"🛡️  Tightened SL for {asset} to ${float(capped_sl):.4f} "
+                                        f"(max loss ${max_loss:.2f})"
+                                    )
+                                    sl_price = capped_sl
+                            except Exception as e:
+                                logging.debug(f"USD SL tighten skipped for {asset}: {e}")
                             
                             # Cancel existing TP/SL orders first to avoid "max stop order limit" error
                             try:

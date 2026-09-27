@@ -14,6 +14,70 @@ CACHE_DIR = Path("settings_cache")
 CACHE_FILE = CACHE_DIR / "trading_settings_cache.json"
 
 
+def _coalesce(*values: Any) -> Any:
+    """Return the first value that is not None (DB nulls still count as present for dict.get)."""
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def resolve_max_loss_usd(trading_settings: Dict[str, Any], default: float = 6.0) -> float:
+    """Positive dollar amount of max allowed loss per trade."""
+    stop = trading_settings.get("stop_loss_usd")
+    risk = trading_settings.get("risk_per_trade_usd")
+    if stop is not None:
+        try:
+            stop_f = float(stop)
+            if stop_f < 0:
+                return abs(stop_f)
+            if stop_f > 0:
+                return stop_f
+        except (TypeError, ValueError):
+            pass
+    if risk is not None:
+        try:
+            risk_f = float(risk)
+            if risk_f > 0:
+                return risk_f
+        except (TypeError, ValueError):
+            pass
+    return float(default)
+
+
+def resolve_stop_loss_usd(trading_settings: Dict[str, Any], default: float = -6.0) -> float:
+    """Negative USD stop ceiling used by mechanical close checks."""
+    return -abs(resolve_max_loss_usd(trading_settings, default=abs(default)))
+
+
+def tighten_sl_to_max_loss(
+    entry_price: float,
+    is_long: bool,
+    quantity: float,
+    sl_price: Optional[float],
+    max_loss_usd: float,
+) -> Optional[float]:
+    """Use the tighter of ATR/price SL and the USD max-loss price for this size."""
+    try:
+        entry = float(entry_price or 0)
+        qty = abs(float(quantity or 0))
+        max_loss = float(max_loss_usd or 0)
+    except (TypeError, ValueError):
+        return sl_price
+    if entry <= 0 or qty <= 0 or max_loss <= 0:
+        return sl_price
+    delta = max_loss / qty
+    usd_sl = entry - delta if is_long else entry + delta
+    if sl_price is None:
+        return usd_sl
+    try:
+        existing = float(sl_price)
+    except (TypeError, ValueError):
+        return usd_sl
+    # Tighter = closer to entry
+    return max(existing, usd_sl) if is_long else min(existing, usd_sl)
+
+
 def _save_cached_trading_settings(settings: Dict[str, Any]) -> None:
     """Persist latest successful DB settings for outage fallback."""
     try:
@@ -85,10 +149,18 @@ async def get_trading_settings() -> Dict[str, Any]:
                         "allocation_per_position": data.get("allocation_per_position"),
                         "margin_per_position": float(margin_per_pos) if margin_per_pos is not None else None,
                         "max_positions": int(data.get("max_positions", 6)),
-                        "position_sizing_mode": data.get("position_sizing_mode", CONFIG.get("position_sizing_mode", "risk")),
-                        "risk_per_trade_usd": data.get("risk_per_trade_usd", CONFIG.get("risk_per_trade_usd", 6.0)),
-                        "risk_per_trade_pct": float(data.get("risk_per_trade_pct", CONFIG.get("risk_per_trade_pct", 0.5))),
-                        "max_notional_per_position": data.get("max_notional_per_position", CONFIG.get("max_notional_per_position")),
+                        "position_sizing_mode": _coalesce(
+                            data.get("position_sizing_mode"), CONFIG.get("position_sizing_mode"), "risk"
+                        ),
+                        "risk_per_trade_usd": _coalesce(
+                            data.get("risk_per_trade_usd"), CONFIG.get("risk_per_trade_usd"), 6.0
+                        ),
+                        "risk_per_trade_pct": float(
+                            _coalesce(data.get("risk_per_trade_pct"), CONFIG.get("risk_per_trade_pct"), 0.5)
+                        ),
+                        "max_notional_per_position": _coalesce(
+                            data.get("max_notional_per_position"), CONFIG.get("max_notional_per_position")
+                        ),
                         # Volatility-adaptive exits
                         "exit_mode": data.get("exit_mode", CONFIG.get("exit_mode", "fixed")),
                         "tp_mode": data.get("tp_mode", CONFIG.get("tp_mode", "roi_percent")),
@@ -106,7 +178,9 @@ async def get_trading_settings() -> Dict[str, Any]:
                         "breakeven_trigger_r": float(data.get("breakeven_trigger_r", CONFIG.get("breakeven_trigger_r", 1.0))),
                         "trailing_stop_activation_r": float(data.get("trailing_stop_activation_r", CONFIG.get("trailing_stop_activation_r", 1.0))),
                         "trailing_stop_distance_r": float(data.get("trailing_stop_distance_r", CONFIG.get("trailing_stop_distance_r", 1.0))),
-                        "min_notional_per_position": data.get("min_notional_per_position", CONFIG.get("min_notional_per_position", 50.0)),
+                        "min_notional_per_position": _coalesce(
+                            data.get("min_notional_per_position"), CONFIG.get("min_notional_per_position"), 50.0
+                        ),
                         # Scale-out ladder
                         "enable_profit_ladder": bool(data.get("enable_profit_ladder", CONFIG.get("enable_profit_ladder", True))),
                         "profit_ladder": data.get("profit_ladder", CONFIG.get("profit_ladder", "1.0:50,2.0:30")),
@@ -151,7 +225,10 @@ async def get_trading_settings() -> Dict[str, Any]:
                         "scalping_sl_percent": float(data.get("scalping_sl_percent", 5.0)),
                         "auto_strategy_cache_minutes": int(data.get("auto_strategy_cache_minutes", 0)),
                         # Stop loss enforcement
-                        "stop_loss_usd": data.get("stop_loss_usd", CONFIG.get("stop_loss_usd", -6.0)),
+                        # Stop loss enforcement — never leave null (Coolify rows often have SQL NULL)
+                        "stop_loss_usd": float(
+                            _coalesce(data.get("stop_loss_usd"), CONFIG.get("stop_loss_usd"), -6.0)
+                        ),
                         "take_profit_strict_enforcement": bool(data.get("take_profit_strict_enforcement", False)),
                         "hard_max_loss_cap_percent": float(data.get("hard_max_loss_cap_percent", 8.0)),
                         "enable_stop_loss_orders": bool(data.get("enable_stop_loss_orders", CONFIG.get("enable_stop_loss_orders", True))),
@@ -163,6 +240,16 @@ async def get_trading_settings() -> Dict[str, Any]:
                         "llm_model": data.get("llm_model", "deepseek-reasoner"),
                         "deepseek_max_tokens": int(data.get("deepseek_max_tokens", 20000)),
                     }
+                    # Keep hard USD stop at least as tight as Max loss per trade (Coolify NULLs / stale rows).
+                    try:
+                        risk_f = float(settings.get("risk_per_trade_usd") or 0)
+                        if risk_f > 0:
+                            desired_stop = -abs(risk_f)
+                            current_stop = settings.get("stop_loss_usd")
+                            if current_stop is None or float(current_stop) < desired_stop:
+                                settings["stop_loss_usd"] = desired_stop
+                    except (TypeError, ValueError):
+                        settings["stop_loss_usd"] = -6.0
                     _save_cached_trading_settings(settings)
                     return _apply_env_bool_overrides(settings)
                 else:
@@ -361,6 +448,13 @@ def calculate_risk_based_allocation(
         risk_pct = float(trading_settings.get("risk_per_trade_pct") or CONFIG.get("risk_per_trade_pct", 0.5) or 0.5)
         risk_usd = available_balance * (risk_pct / 100.0)
     risk_usd = max(float(risk_usd), 0.0)
+    # Never let sizing exceed the hard USD stop ceiling when both are set.
+    try:
+        stop_ceiling = trading_settings.get("stop_loss_usd")
+        if stop_ceiling is not None and float(stop_ceiling) < 0:
+            risk_usd = min(risk_usd, abs(float(stop_ceiling)))
+    except (TypeError, ValueError):
+        pass
 
     required_notional = risk_usd / (stop_price_pct / 100.0)
 
@@ -368,20 +462,21 @@ def calculate_risk_based_allocation(
     if max_notional:
         required_notional = min(required_notional, float(max_notional))
 
-    # A very tight stop can size the position below the exchange's minimum order, which would
-    # round to zero contracts. Lift it to the floor and say so — actual risk exceeds the target.
+    # Do NOT silently raise size above the risk budget. If exchange min notional would
+    # risk more than max loss, skip the trade (return 0) instead of oversizing.
     min_notional = float(
         trading_settings.get("min_notional_per_position")
-        or CONFIG.get("min_notional_per_position", 100.0)
+        or CONFIG.get("min_notional_per_position", 50.0)
         or 0.0
     )
     if min_notional and required_notional < min_notional:
         actual_risk = min_notional * (stop_price_pct / 100.0)
-        logging.warning(
-            f"⚠️  Risk sizing produced ${required_notional:.2f} notional, below the "
-            f"${min_notional:.2f} minimum. Raising to floor — this trade risks "
-            f"${actual_risk:.2f} instead of ${risk_usd:.2f}."
-        )
+        if actual_risk > risk_usd + 0.01:
+            logging.warning(
+                f"⚠️  Risk sizing needs ${required_notional:.2f} notional for ${risk_usd:.2f} risk, "
+                f"but min notional ${min_notional:.2f} would risk ${actual_risk:.2f}. Skipping trade."
+            )
+            return 0.0
         required_notional = min_notional
 
     margin = required_notional / leverage
