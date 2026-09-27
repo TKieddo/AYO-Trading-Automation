@@ -59,9 +59,9 @@ export function TradingSettings() {
     stop_loss_percent: 3.0,
     target_profit_per_1pct_move: 1.0,
     allocation_per_position: null,
-    margin_per_position: null,
+    margin_per_position: 30,
     max_positions: 6,
-    position_sizing_mode: "risk",
+    position_sizing_mode: "margin",
     active_strategy_ids: [],
     multi_exchange_mode: false,
     assets: "BTC ETH SOL",
@@ -133,9 +133,9 @@ export function TradingSettings() {
           stop_loss_percent: data.stop_loss_percent || 3.0,
           target_profit_per_1pct_move: data.target_profit_per_1pct_move ?? 1.0,
           allocation_per_position: data.allocation_per_position ?? null,
-          margin_per_position: data.margin_per_position ?? null,
+          margin_per_position: data.margin_per_position ?? 30,
           max_positions: data.max_positions ?? 6,
-          position_sizing_mode: data.position_sizing_mode || "risk",
+          position_sizing_mode: data.position_sizing_mode || "margin",
           active_strategy_ids: data.active_strategy_ids || [],
           multi_exchange_mode: data.multi_exchange_mode ?? false,
           assets: data.assets || "BTC ETH SOL",
@@ -354,19 +354,22 @@ export function TradingSettings() {
               }
               className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#c0e156]"
             >
-              <option value="risk">Risk (Same $ risked per trade from stop distance — recommended)</option>
-              <option value="margin">Margin (Fixed margin × leverage = notional)</option>
+              <option value="margin">Margin (Fixed $ margin × leverage — e.g. $30)</option>
+              <option value="risk">Risk (Shrinks size so ATR stop ≈ Max loss $)</option>
               <option value="auto">Auto (Calculate from target profit)</option>
               <option value="target_profit">Target Profit (Calculate from target profit per 1% move)</option>
               <option value="fixed">Fixed (Use fixed allocation per position)</option>
             </select>
             <p className="text-xs text-slate-500">
-              Prefer Risk with ATR exits. Set Risk per trade (USD) in the Adaptive Risk card below.
+              Use Margin for a steady $30 size. Max loss (USD) still hard-closes / tightens the stop at -$6.
+              Risk mode intentionally uses smaller margin when the ATR stop is wide.
             </p>
           </div>
 
-          {settings.position_sizing_mode === "risk" && (
+          {(settings.position_sizing_mode === "risk" || settings.position_sizing_mode === "margin") && (
             <div className="space-y-4 rounded-md border border-emerald-200 bg-emerald-50/60 px-3 py-3">
+              {settings.position_sizing_mode === "risk" && (
+              <>
               <div className="space-y-2">
                 <Label htmlFor="risk_per_trade_usd" className="font-semibold">
                   Max loss per trade (USD)
@@ -393,7 +396,7 @@ export function TradingSettings() {
                 />
                 <p className="text-xs text-slate-600">
                   Position size is solved from your ATR stop so every trade risks about this much.
-                  Wider stop → smaller size. Change this anytime — also mirrored as Stop Loss (USD) below.
+                  Wider stop → smaller margin (e.g. ~$12). Change anytime.
                 </p>
               </div>
               <div className="space-y-2">
@@ -419,6 +422,38 @@ export function TradingSettings() {
                   Used only if Max loss (USD) is empty.
                 </p>
               </div>
+              </>
+              )}
+              {settings.position_sizing_mode === "margin" && (
+              <div className="space-y-2">
+                <Label htmlFor="risk_per_trade_usd_margin" className="font-semibold">
+                  Max loss ceiling (USD)
+                  <span className="text-xs text-slate-500 font-normal ml-2">(hard stop — does not change $30 margin)</span>
+                </Label>
+                <Input
+                  id="risk_per_trade_usd_margin"
+                  type="number"
+                  min="0.5"
+                  max="100000"
+                  step="0.5"
+                  value={settings.risk_per_trade_usd ?? ""}
+                  onChange={(e) => {
+                    const next = e.target.value ? parseFloat(e.target.value) : null;
+                    setSettings({
+                      ...settings,
+                      risk_per_trade_usd: next,
+                      stop_loss_usd: next != null && next > 0 ? -Math.abs(next) : settings.stop_loss_usd,
+                    });
+                  }}
+                  className="w-full"
+                  placeholder="6"
+                />
+                <p className="text-xs text-slate-600">
+                  Keeps margin at your Margin per Position amount. Exchange SL is tightened and
+                  positions are force-closed if unrealized PnL hits -this amount.
+                </p>
+              </div>
+              )}
             </div>
           )}
 

@@ -147,10 +147,10 @@ async def get_trading_settings() -> Dict[str, Any]:
                         "stop_loss_percent": float(data.get("stop_loss_percent", 3.0)),
                         "target_profit_per_1pct_move": float(data.get("target_profit_per_1pct_move", 1.0)),
                         "allocation_per_position": data.get("allocation_per_position"),
-                        "margin_per_position": float(margin_per_pos) if margin_per_pos is not None else None,
+                        "margin_per_position": float(margin_per_pos) if margin_per_pos is not None else float(_coalesce(CONFIG.get("margin_per_position"), 30.0)),
                         "max_positions": int(data.get("max_positions", 6)),
                         "position_sizing_mode": _coalesce(
-                            data.get("position_sizing_mode"), CONFIG.get("position_sizing_mode"), "risk"
+                            data.get("position_sizing_mode"), CONFIG.get("position_sizing_mode"), "margin"
                         ),
                         "risk_per_trade_usd": _coalesce(
                             data.get("risk_per_trade_usd"), CONFIG.get("risk_per_trade_usd"), 6.0
@@ -279,9 +279,9 @@ async def get_trading_settings() -> Dict[str, Any]:
         "stop_loss_percent": CONFIG.get("stop_loss_percent", 3),
         "target_profit_per_1pct_move": CONFIG.get("target_profit_per_1pct_move", 1.0),
         "allocation_per_position": CONFIG.get("allocation_per_position"),
-        "margin_per_position": float(margin_per_pos) if margin_per_pos is not None else None,
+        "margin_per_position": float(margin_per_pos) if margin_per_pos is not None else float(CONFIG.get("margin_per_position") or 30.0),
         "max_positions": CONFIG.get("max_positions", 6),
-        "position_sizing_mode": CONFIG.get("position_sizing_mode", "risk"),
+        "position_sizing_mode": CONFIG.get("position_sizing_mode", "margin"),
         "risk_per_trade_usd": CONFIG.get("risk_per_trade_usd", 6.0),
         "risk_per_trade_pct": CONFIG.get("risk_per_trade_pct", 0.5),
         "max_notional_per_position": CONFIG.get("max_notional_per_position"),

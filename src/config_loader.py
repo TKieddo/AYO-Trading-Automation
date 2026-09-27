@@ -150,11 +150,11 @@ CONFIG = {
     # Position sizing (fallback when database unavailable)
     "target_profit_per_1pct_move": _get_float("TARGET_PROFIT_PER_1PCT_MOVE", 1.0),  # Target profit per 1% price move (e.g., 1.0 = $1 per 1%, 3.0 = $3 per 1%)
     "allocation_per_position": _get_float("ALLOCATION_PER_POSITION"),  # Fixed allocation per position (None = auto)
-    "margin_per_position": _get_float("MARGIN_PER_POSITION"),  # Margin per position when position_sizing_mode is "margin" (None = not set)
+    "margin_per_position": _get_float("MARGIN_PER_POSITION", 30.0),  # Fixed margin when position_sizing_mode is "margin"
     "max_positions": _get_int("MAX_POSITIONS", 6),  # Maximum concurrent positions
-    "position_sizing_mode": _get_env("POSITION_SIZING_MODE", "risk"),  # risk | margin | auto | fixed | target_profit
-    # Risk-based sizing: notional is solved from the stop distance so every trade risks the same amount.
-    "risk_per_trade_usd": _get_float("RISK_PER_TRADE_USD", 6.0),  # Max $ loss if ATR stop is hit
+    "position_sizing_mode": _get_env("POSITION_SIZING_MODE", "margin"),  # margin | risk | auto | fixed | target_profit
+    # Risk knobs: in margin mode these only cap the hard USD stop; in risk mode they also size the trade.
+    "risk_per_trade_usd": _get_float("RISK_PER_TRADE_USD", 6.0),  # Max $ loss ceiling / risk-mode size target
     "risk_per_trade_pct": _get_float("RISK_PER_TRADE_PCT", 0.5),  # Fallback % of equity when USD not set
     "max_notional_per_position": _get_float("MAX_NOTIONAL_PER_POSITION"),  # Optional hard cap on notional exposure
     "min_notional_per_position": _get_float("MIN_NOTIONAL_PER_POSITION", 50.0),  # Floor so risk sizing never emits a sub-minimum order

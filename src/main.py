@@ -795,6 +795,7 @@ def main():
             f"(capped by asset max if lower).{per_asset_note} Maximum {max_positions} concurrent positions allowed."
         )
 
+        sizing_mode = str(trading_settings.get("position_sizing_mode", "risk") or "risk").lower()
         if sizing_mode == "risk":
             risk_desc = f"${float(risk_usd):.2f}" if risk_usd is not None else f"{float(risk_pct or 0.5):.2f}% of equity"
             hard_sl = f"${float(stop_loss_usd):.2f}" if stop_loss_usd is not None else "not set"
@@ -811,11 +812,12 @@ def main():
             )
 
         notional_preview = float(margin_per_position) * default_leverage
+        hard_sl = f"${float(stop_loss_usd):.2f}" if stop_loss_usd is not None else "not set"
         return (
             f"{base_note}\n"
             f"MARGIN MODE: use exactly ${float(margin_per_position):.2f} margin × leverage "
             f"(≈ ${notional_preview:.2f} notional at {default_leverage}x). "
-            f"Do NOT suggest allocation_usd above that — system enforces it."
+            f"Hard USD stop ceiling: {hard_sl}. Do NOT suggest allocation_usd above margin — system enforces it."
         )
 
     def _has_required_ta_data(asset: str) -> bool:
@@ -2781,11 +2783,13 @@ def main():
                         
                         # Position sizing: risk mode sizes from stop distance; margin mode uses fixed MARGIN_PER_POSITION
                         margin_per_position = trading_settings.get("margin_per_position")
-                        sizing_mode_pre = str(trading_settings.get("position_sizing_mode", "risk") or "risk").lower()
+                        sizing_mode_pre = str(trading_settings.get("position_sizing_mode", "margin") or "margin").lower()
 
-                        # Risk mode derives margin from the stop; margin mode requires MARGIN_PER_POSITION.
+                        # Risk mode derives margin from the stop; margin mode uses fixed MARGIN_PER_POSITION ($30 default).
                         if margin_per_position is None and sizing_mode_pre == "risk":
                             margin_per_position = available_balance
+                        if margin_per_position is None and sizing_mode_pre == "margin":
+                            margin_per_position = float(CONFIG.get("margin_per_position") or 30.0)
                         if margin_per_position is None:
                             add_event(f"❌ ERROR: MARGIN_PER_POSITION is not set and sizing mode is not Risk. Cannot place trade for {asset}.")
                             continue
@@ -2844,7 +2848,7 @@ def main():
                                 f"target {active_exit_plan.target_price_pct:.2f}% of price"
                             )
 
-                        sizing_mode = str(trading_settings.get("position_sizing_mode", "risk") or "risk").lower()
+                        sizing_mode = str(trading_settings.get("position_sizing_mode", "margin") or "margin").lower()
                         if sizing_mode == "risk":
                             # Notional is solved from the stop distance so each trade risks the same USD.
                             alloc_usd = calculate_risk_based_allocation(
