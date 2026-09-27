@@ -775,55 +775,48 @@ def main():
         add_event("🔕 Notifications disabled (ENABLE_WEBHOOK_NOTIFICATIONS=false).")
 
     def _build_position_sizing_note(trading_settings: dict, default_leverage: int, per_asset_leverage: dict = None) -> str:
-        """Build position sizing note for LLM context - ALWAYS uses margin mode."""
+        """Build position sizing note for LLM context (risk or margin mode)."""
+        sizing_mode = str(trading_settings.get("position_sizing_mode", "risk") or "risk").lower()
         margin_per_position = trading_settings.get("margin_per_position")
         max_positions = trading_settings.get("max_positions", 6)
-        
-        # Build per-asset leverage note if any assets have custom leverage
+        risk_usd = trading_settings.get("risk_per_trade_usd")
+        risk_pct = trading_settings.get("risk_per_trade_pct", 0.5)
+        stop_loss_usd = trading_settings.get("stop_loss_usd")
+
         per_asset_note = ""
         if per_asset_leverage:
             custom_leverage_assets = {k: v for k, v in per_asset_leverage.items() if v != default_leverage}
             if custom_leverage_assets:
                 per_asset_list = ", ".join([f"{asset}: {lev}x" for asset, lev in custom_leverage_assets.items()])
                 per_asset_note = f" PER-ASSET LEVERAGE OVERRIDES: {per_asset_list}. These are MANDATORY and will be strictly enforced."
-        
-        base_note = f"Use these percentages to calculate TP/SL prices. Default leverage: {default_leverage}x (from DEFAULT_LEVERAGE in settings/.env, will be capped by asset max if lower).{per_asset_note} Maximum {max_positions} concurrent positions allowed."
-        
+
+        base_note = (
+            f"Use these percentages to calculate TP/SL prices. Default leverage: {default_leverage}x "
+            f"(capped by asset max if lower).{per_asset_note} Maximum {max_positions} concurrent positions allowed."
+        )
+
+        if sizing_mode == "risk":
+            risk_desc = f"${float(risk_usd):.2f}" if risk_usd is not None else f"{float(risk_pct or 0.5):.2f}% of equity"
+            hard_sl = f"${float(stop_loss_usd):.2f}" if stop_loss_usd is not None else "not set"
+            return (
+                f"{base_note}\n"
+                f"🎯 RISK MODE: position size is solved from the ATR stop so each trade risks about {risk_desc}. "
+                f"Hard USD stop ceiling: {hard_sl}. You do NOT set allocation_usd — focus on buy/sell/hold only."
+            )
+
         if margin_per_position is None:
-            return f"{base_note} ⚠️ CRITICAL: MARGIN_PER_POSITION is not configured. The system requires MARGIN_PER_POSITION to be set in settings/.env file. Trades will be skipped until this is configured."
-        
-        # Calculate notional preview using default leverage (per-asset overrides will be applied per asset)
-        notional_preview = margin_per_position * default_leverage
-        
-        # Build explicit instructions for LLM
-        margin_instruction = f"""
-🚨 MANDATORY POSITION SIZING RULES - STRICTLY ENFORCED 🚨
+            return (
+                f"{base_note} ⚠️ CRITICAL: MARGIN_PER_POSITION is not configured. "
+                f"Trades will be skipped until it is set (or switch Position Sizing Mode to Risk)."
+            )
 
-1. MARGIN_PER_POSITION: ${margin_per_position:.2f} USD
-   - This is the EXACT margin amount that MUST be used for every trade
-   - You MUST NOT suggest allocation_usd values that exceed ${margin_per_position:.2f}
-   - The system will automatically enforce this limit, but you must respect it in your decisions
-
-2. LEVERAGE RULES:
-   - Default leverage: {default_leverage}x (from DEFAULT_LEVERAGE in settings/.env)
-   - Per-asset leverage overrides: {per_asset_note if per_asset_note else "None - using default"}
-   - For each asset, use the leverage specified in per_asset_leverage (if set) or default_leverage
-   - These leverage values are MANDATORY and cannot be exceeded
-
-3. CALCULATION:
-   - Notional Value = MARGIN_PER_POSITION × Leverage
-   - Example: ${margin_per_position:.2f} margin × {default_leverage}x leverage = ${notional_preview:.2f} notional
-   - The system handles all calculations automatically - you do NOT need to calculate allocation_usd
-
-4. DUAL ENFORCEMENT:
-   - System-level: The system will automatically enforce these limits before trade execution
-   - Agent-level: You must respect these limits in your trading decisions
-   - If you suggest values exceeding these limits, the system will override them and log a warning
-
-⚠️ CRITICAL: These values are MANDATORY. Do NOT suggest allocation_usd values that exceed MARGIN_PER_POSITION (${margin_per_position:.2f}). Focus on trading decisions (buy/sell/hold) only.
-"""
-        
-        return f"{base_note}{margin_instruction}"
+        notional_preview = float(margin_per_position) * default_leverage
+        return (
+            f"{base_note}\n"
+            f"MARGIN MODE: use exactly ${float(margin_per_position):.2f} margin × leverage "
+            f"(≈ ${notional_preview:.2f} notional at {default_leverage}x). "
+            f"Do NOT suggest allocation_usd above that — system enforces it."
+        )
 
     def _has_required_ta_data(asset: str) -> bool:
         """Validate that key TA inputs exist before adding hunted asset to decision universe."""
@@ -1591,16 +1584,21 @@ def main():
                     "scalping_sl_percent": scalping_sl_percent,  # Scalping strategy SL%
                     "take_profit_strict_enforcement": take_profit_strict_enforcement,  # If true, TP must be strictly enforced
                     "agent_manage_exits": agent_manage_exits,  # If false, do not close positions from agent logic except TP/SL checks
-                    "margin_per_position": trading_settings.get("margin_per_position"),  # MANDATORY - always use margin mode
+                    "margin_per_position": trading_settings.get("margin_per_position"),
+                    "risk_per_trade_usd": trading_settings.get("risk_per_trade_usd"),
+                    "risk_per_trade_pct": trading_settings.get("risk_per_trade_pct"),
+                    "stop_loss_usd": trading_settings.get("stop_loss_usd"),
                     "max_positions": trading_settings.get("max_positions", 5),
-                    "position_sizing_mode": "margin",  # ALWAYS margin mode - system enforces this
+                    "position_sizing_mode": str(trading_settings.get("position_sizing_mode", "risk") or "risk").lower(),
                     "note": _build_position_sizing_note(trading_settings, default_leverage, per_asset_leverage),
                     "⚠️_CRITICAL_RULES": {
+                        "position_sizing_mode": str(trading_settings.get("position_sizing_mode", "risk") or "risk").lower(),
+                        "risk_per_trade_usd": trading_settings.get("risk_per_trade_usd"),
+                        "stop_loss_usd": trading_settings.get("stop_loss_usd"),
                         "margin_per_position": trading_settings.get("margin_per_position"),
                         "default_leverage": default_leverage,
                         "per_asset_leverage": per_asset_leverage,
-                        "enforcement": "DUAL: System-level (automatic) + Agent-level (must respect in decisions)",
-                        "warning": f"ALLOCATION_USD must NEVER exceed MARGIN_PER_POSITION (${trading_settings.get('margin_per_position') or 0:.2f}). System will enforce this, but agent must also respect it."
+                        "enforcement": "System sizes positions; agent focuses on buy/sell/hold",
                     }
                 }),
                 ("account", dashboard),
@@ -2769,15 +2767,15 @@ def main():
                         available_balance = state.get('balance', 0.0)
                         max_leverage = await get_max_leverage_for_asset(hyperliquid, asset)
                         
-                        # ALWAYS USE MARGIN MODE - Strict enforcement of MARGIN_PER_POSITION and per-asset leverage
+                        # Position sizing: risk mode sizes from stop distance; margin mode uses fixed MARGIN_PER_POSITION
                         margin_per_position = trading_settings.get("margin_per_position")
-                        
-                        # CRITICAL: If margin_per_position is not set, skip trade (strict enforcement).
-                        # Risk mode derives its own margin from the stop distance, so it is exempt.
-                        if margin_per_position is None and str(trading_settings.get("position_sizing_mode", "auto")).lower() == "risk":
+                        sizing_mode_pre = str(trading_settings.get("position_sizing_mode", "risk") or "risk").lower()
+
+                        # Risk mode derives margin from the stop; margin mode requires MARGIN_PER_POSITION.
+                        if margin_per_position is None and sizing_mode_pre == "risk":
                             margin_per_position = available_balance
                         if margin_per_position is None:
-                            add_event(f"❌ ERROR: MARGIN_PER_POSITION is not set in settings/.env. Cannot place trade for {asset}. Please configure MARGIN_PER_POSITION.")
+                            add_event(f"❌ ERROR: MARGIN_PER_POSITION is not set and sizing mode is not Risk. Cannot place trade for {asset}.")
                             continue
                         
                         # Set leverage BEFORE calculating notional (for margin mode, this determines actual leverage)
@@ -2834,7 +2832,7 @@ def main():
                                 f"target {active_exit_plan.target_price_pct:.2f}% of price"
                             )
 
-                        sizing_mode = str(trading_settings.get("position_sizing_mode", "auto")).lower()
+                        sizing_mode = str(trading_settings.get("position_sizing_mode", "risk") or "risk").lower()
                         if sizing_mode == "risk":
                             # Notional is solved from the stop distance so each trade risks the same USD.
                             alloc_usd = calculate_risk_based_allocation(
@@ -2849,10 +2847,9 @@ def main():
                                 f"${alloc_usd * leverage_to_use:.2f} notional → risking ${risk_usd:.2f} "
                                 f"to make ${risk_usd * (active_exit_plan.target_price_pct / active_exit_plan.stop_price_pct):.2f}"
                             )
-                            margin_per_position = max(margin_per_position, alloc_usd)
+                            margin_per_position = max(float(margin_per_position or 0), alloc_usd)
                         else:
                             # MARGIN MODE: STRICTLY enforce MARGIN_PER_POSITION (never exceed user's setting)
-                            # Dual enforcement: System-level (here) and Agent-level (in LLM context)
                             alloc_usd = min(margin_per_position, available_balance)
                         
                         # STRICT VALIDATION: Margin must never exceed MARGIN_PER_POSITION
@@ -2871,9 +2868,10 @@ def main():
                         expected_profit_1_5pct = calculate_profit(alloc_usd, 1, leverage_to_use)
                         expected_profit_2pct = calculate_profit(alloc_usd, 2.0, leverage_to_use)
                         
-                        add_event(f"💰 MARGIN MODE (ALWAYS): Using ${alloc_usd:.2f} margin (MARGIN_PER_POSITION: ${margin_per_position:.2f}) with {leverage_to_use}x leverage = ${notional_preview:.2f} notional")
+                        mode_label = "RISK MODE" if sizing_mode == "risk" else "MARGIN MODE"
+                        add_event(f"💰 {mode_label}: Using ${alloc_usd:.2f} margin with {leverage_to_use}x leverage = ${notional_preview:.2f} notional")
                         add_event(f"   📊 Expected profit: ${expected_profit_1_5pct:.2f} on 1% move, ${expected_profit_2pct:.2f} on 2% move")
-                        add_event(f"   ✅ System-level enforcement: Margin strictly capped at ${margin_per_position:.2f}, Leverage: {leverage_to_use}x (per-asset: {asset_leverage}x, default: {default_leverage}x)")
+                        add_event(f"   ✅ Leverage: {leverage_to_use}x (per-asset: {asset_leverage}x, default: {default_leverage}x)")
                         
                         if alloc_usd <= 0:
                             # If LLM signals 'sell' with zero allocation but we have a position, close it reduce-only

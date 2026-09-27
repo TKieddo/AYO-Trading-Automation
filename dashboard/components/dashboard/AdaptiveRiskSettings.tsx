@@ -76,8 +76,8 @@ const SECTIONS: Section[] = [
     blurb:
       "Notional is solved from the stop distance, so every trade risks the same amount whether the stop is 0.8% or 4% wide. Set the sizing mode to 'risk' on the main settings card to use this.",
     fields: [
-      { key: "risk_per_trade_usd", label: "Risk per trade (USD)", type: "number", step: "0.5", nullable: true, help: "Fixed dollar loss if the stop is hit. Leave blank to use the percentage below." },
-      { key: "risk_per_trade_pct", label: "Risk per trade (% of equity)", type: "number", step: "0.05", help: "Used when the USD figure is blank. 0.5% is a common starting point." },
+      { key: "risk_per_trade_usd", label: "Max loss per trade (USD)", type: "number", step: "0.5", nullable: true, help: "Dollar loss if the ATR stop is hit. Position size shrinks when the stop is wider. Default 6." },
+      { key: "risk_per_trade_pct", label: "Fallback risk (% of equity)", type: "number", step: "0.05", help: "Used when Max loss (USD) is blank. 0.5% is a common starting point." },
       { key: "min_notional_per_position", label: "Minimum notional (USD)", type: "number", step: "10", help: "Floor so a tight stop cannot size an order below the exchange minimum." },
       { key: "max_notional_per_position", label: "Maximum notional (USD)", type: "number", step: "100", nullable: true, help: "Optional hard cap on exposure per position. Blank means no cap." },
     ],

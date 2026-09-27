@@ -191,7 +191,7 @@ export async function GET() {
       allocation_per_position: null,
       margin_per_position: null,
       max_positions: 6,
-      position_sizing_mode: "auto",
+      position_sizing_mode: "risk",
       active_strategy_ids: [],
       multi_exchange_mode: false,
       assets: "BTC ETH SOL",
@@ -218,7 +218,7 @@ export async function GET() {
       llm_model: "deepseek-reasoner",
       deepseek_max_tokens: 20000,
       next_public_base_url: "http://localhost:3001",
-      stop_loss_usd: null,
+      stop_loss_usd: -6,
       take_profit_strict_enforcement: false,
       enable_stop_loss_orders: true,
       // Volatility-adaptive exits
@@ -231,10 +231,10 @@ export async function GET() {
       min_stop_price_pct: 0.8,
       max_stop_price_pct: 5.0,
       // Risk-based sizing
-      risk_per_trade_usd: null,
+      risk_per_trade_usd: 6,
       risk_per_trade_pct: 0.5,
       max_notional_per_position: null,
-      min_notional_per_position: 100,
+      min_notional_per_position: 50,
       // Scale-out ladder
       enable_profit_ladder: true,
       profit_ladder: "1.0:50,2.0:30",

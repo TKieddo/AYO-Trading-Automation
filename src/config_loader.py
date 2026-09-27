@@ -152,12 +152,13 @@ CONFIG = {
     "allocation_per_position": _get_float("ALLOCATION_PER_POSITION"),  # Fixed allocation per position (None = auto)
     "margin_per_position": _get_float("MARGIN_PER_POSITION"),  # Margin per position when position_sizing_mode is "margin" (None = not set)
     "max_positions": _get_int("MAX_POSITIONS", 6),  # Maximum concurrent positions
-    "position_sizing_mode": _get_env("POSITION_SIZING_MODE", "auto"),  # "auto", "fixed", "target_profit", "margin", or "risk"
+    "position_sizing_mode": _get_env("POSITION_SIZING_MODE", "risk"),  # risk | margin | auto | fixed | target_profit
     # Risk-based sizing: notional is solved from the stop distance so every trade risks the same amount.
-    "risk_per_trade_usd": _get_float("RISK_PER_TRADE_USD"),  # Fixed USD risk per trade (takes precedence)
-    "risk_per_trade_pct": _get_float("RISK_PER_TRADE_PCT", 0.5),  # Risk per trade as % of equity when USD not set
+    "risk_per_trade_usd": _get_float("RISK_PER_TRADE_USD", 6.0),  # Max $ loss if ATR stop is hit
+    "risk_per_trade_pct": _get_float("RISK_PER_TRADE_PCT", 0.5),  # Fallback % of equity when USD not set
     "max_notional_per_position": _get_float("MAX_NOTIONAL_PER_POSITION"),  # Optional hard cap on notional exposure
-    "min_notional_per_position": _get_float("MIN_NOTIONAL_PER_POSITION", 100.0),  # Floor so risk sizing never emits a sub-minimum order
+    "min_notional_per_position": _get_float("MIN_NOTIONAL_PER_POSITION", 50.0),  # Floor so risk sizing never emits a sub-minimum order
+    "stop_loss_usd": _get_float("STOP_LOSS_USD", -6.0),  # Hard ceiling (negative); close if unrealized PnL hits this
     # LLM via DeepSeek API (replaces OpenRouter)
     "deepseek_api_key": _get_env("DEEPSEEK_API_KEY", required=True),
     "deepseek_base_url": _get_env("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),

@@ -85,8 +85,8 @@ async def get_trading_settings() -> Dict[str, Any]:
                         "allocation_per_position": data.get("allocation_per_position"),
                         "margin_per_position": float(margin_per_pos) if margin_per_pos is not None else None,
                         "max_positions": int(data.get("max_positions", 6)),
-                        "position_sizing_mode": data.get("position_sizing_mode", CONFIG.get("position_sizing_mode", "auto")),
-                        "risk_per_trade_usd": data.get("risk_per_trade_usd", CONFIG.get("risk_per_trade_usd")),
+                        "position_sizing_mode": data.get("position_sizing_mode", CONFIG.get("position_sizing_mode", "risk")),
+                        "risk_per_trade_usd": data.get("risk_per_trade_usd", CONFIG.get("risk_per_trade_usd", 6.0)),
                         "risk_per_trade_pct": float(data.get("risk_per_trade_pct", CONFIG.get("risk_per_trade_pct", 0.5))),
                         "max_notional_per_position": data.get("max_notional_per_position", CONFIG.get("max_notional_per_position")),
                         # Volatility-adaptive exits
@@ -106,7 +106,7 @@ async def get_trading_settings() -> Dict[str, Any]:
                         "breakeven_trigger_r": float(data.get("breakeven_trigger_r", CONFIG.get("breakeven_trigger_r", 1.0))),
                         "trailing_stop_activation_r": float(data.get("trailing_stop_activation_r", CONFIG.get("trailing_stop_activation_r", 1.0))),
                         "trailing_stop_distance_r": float(data.get("trailing_stop_distance_r", CONFIG.get("trailing_stop_distance_r", 1.0))),
-                        "min_notional_per_position": data.get("min_notional_per_position", CONFIG.get("min_notional_per_position", 100.0)),
+                        "min_notional_per_position": data.get("min_notional_per_position", CONFIG.get("min_notional_per_position", 50.0)),
                         # Scale-out ladder
                         "enable_profit_ladder": bool(data.get("enable_profit_ladder", CONFIG.get("enable_profit_ladder", True))),
                         "profit_ladder": data.get("profit_ladder", CONFIG.get("profit_ladder", "1.0:50,2.0:30")),
@@ -151,7 +151,7 @@ async def get_trading_settings() -> Dict[str, Any]:
                         "scalping_sl_percent": float(data.get("scalping_sl_percent", 5.0)),
                         "auto_strategy_cache_minutes": int(data.get("auto_strategy_cache_minutes", 0)),
                         # Stop loss enforcement
-                        "stop_loss_usd": data.get("stop_loss_usd"),  # Optional: stop loss in USD (e.g., -18)
+                        "stop_loss_usd": data.get("stop_loss_usd", CONFIG.get("stop_loss_usd", -6.0)),
                         "take_profit_strict_enforcement": bool(data.get("take_profit_strict_enforcement", False)),
                         "hard_max_loss_cap_percent": float(data.get("hard_max_loss_cap_percent", 8.0)),
                         "enable_stop_loss_orders": bool(data.get("enable_stop_loss_orders", CONFIG.get("enable_stop_loss_orders", True))),
@@ -194,8 +194,8 @@ async def get_trading_settings() -> Dict[str, Any]:
         "allocation_per_position": CONFIG.get("allocation_per_position"),
         "margin_per_position": float(margin_per_pos) if margin_per_pos is not None else None,
         "max_positions": CONFIG.get("max_positions", 6),
-        "position_sizing_mode": CONFIG.get("position_sizing_mode", "auto"),
-        "risk_per_trade_usd": CONFIG.get("risk_per_trade_usd"),
+        "position_sizing_mode": CONFIG.get("position_sizing_mode", "risk"),
+        "risk_per_trade_usd": CONFIG.get("risk_per_trade_usd", 6.0),
         "risk_per_trade_pct": CONFIG.get("risk_per_trade_pct", 0.5),
         "max_notional_per_position": CONFIG.get("max_notional_per_position"),
         # Volatility-adaptive exits
@@ -215,7 +215,7 @@ async def get_trading_settings() -> Dict[str, Any]:
         "breakeven_trigger_r": CONFIG.get("breakeven_trigger_r", 1.0),
         "trailing_stop_activation_r": CONFIG.get("trailing_stop_activation_r", 1.0),
         "trailing_stop_distance_r": CONFIG.get("trailing_stop_distance_r", 1.0),
-        "min_notional_per_position": CONFIG.get("min_notional_per_position", 100.0),
+        "min_notional_per_position": CONFIG.get("min_notional_per_position", 50.0),
         # Scale-out ladder
         "enable_profit_ladder": CONFIG.get("enable_profit_ladder", True),
         "profit_ladder": CONFIG.get("profit_ladder", "1.0:50,2.0:30"),
@@ -260,7 +260,7 @@ async def get_trading_settings() -> Dict[str, Any]:
         "scalping_sl_percent": CONFIG.get("scalping_sl_percent", 5.0),
         "auto_strategy_cache_minutes": CONFIG.get("auto_strategy_cache_minutes", 0),
         # Stop loss enforcement
-        "stop_loss_usd": CONFIG.get("stop_loss_usd"),  # Optional: stop loss in USD (e.g., -18)
+        "stop_loss_usd": CONFIG.get("stop_loss_usd", -6.0),  # Hard max loss in USD (e.g., -6)
         "take_profit_strict_enforcement": CONFIG.get("take_profit_strict_enforcement", False),
         "hard_max_loss_cap_percent": float(CONFIG.get("stop_loss_percent", 8.0) or 8.0),
         "enable_stop_loss_orders": CONFIG.get("enable_stop_loss_orders", True),

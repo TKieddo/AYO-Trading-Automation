@@ -45,6 +45,8 @@ interface TradingSettings {
   next_public_base_url: string;
   stop_loss_usd: number | null;
   take_profit_usd: number | null;
+  risk_per_trade_usd: number | null;
+  risk_per_trade_pct: number;
   tp_mode: "roi_percent" | "usd" | "atr_rr";
   take_profit_strict_enforcement: boolean;
   enable_stop_loss_orders: boolean;
@@ -59,7 +61,7 @@ export function TradingSettings() {
     allocation_per_position: null,
     margin_per_position: null,
     max_positions: 6,
-    position_sizing_mode: "auto",
+    position_sizing_mode: "risk",
     active_strategy_ids: [],
     multi_exchange_mode: false,
     assets: "BTC ETH SOL",
@@ -86,8 +88,10 @@ export function TradingSettings() {
     llm_model: "deepseek-reasoner",
     deepseek_max_tokens: 20000,
     next_public_base_url: "http://localhost:3001",
-    stop_loss_usd: null,
+    stop_loss_usd: -6,
     take_profit_usd: null,
+    risk_per_trade_usd: 6,
+    risk_per_trade_pct: 0.5,
     tp_mode: "roi_percent",
     take_profit_strict_enforcement: false,
     enable_stop_loss_orders: true,
@@ -131,7 +135,7 @@ export function TradingSettings() {
           allocation_per_position: data.allocation_per_position ?? null,
           margin_per_position: data.margin_per_position ?? null,
           max_positions: data.max_positions ?? 6,
-          position_sizing_mode: data.position_sizing_mode || "auto",
+          position_sizing_mode: data.position_sizing_mode || "risk",
           active_strategy_ids: data.active_strategy_ids || [],
           multi_exchange_mode: data.multi_exchange_mode ?? false,
           assets: data.assets || "BTC ETH SOL",
@@ -153,8 +157,10 @@ export function TradingSettings() {
           scalping_tp_percent: data.scalping_tp_percent ?? 5.0,
           scalping_sl_percent: data.scalping_sl_percent ?? 5.0,
           auto_strategy_cache_minutes: data.auto_strategy_cache_minutes ?? 0,
-          stop_loss_usd: data.stop_loss_usd ?? null,
+          stop_loss_usd: data.stop_loss_usd ?? -6,
           take_profit_usd: data.take_profit_usd ?? null,
+          risk_per_trade_usd: data.risk_per_trade_usd ?? 6,
+          risk_per_trade_pct: data.risk_per_trade_pct ?? 0.5,
           tp_mode: (data.tp_mode as TradingSettings["tp_mode"]) || "roi_percent",
           take_profit_strict_enforcement: data.take_profit_strict_enforcement ?? false,
           enable_stop_loss_orders: data.enable_stop_loss_orders ?? true,
@@ -360,9 +366,60 @@ export function TradingSettings() {
           </div>
 
           {settings.position_sizing_mode === "risk" && (
-            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
-              Risk mode is on. Dollar size comes from Adaptive Risk → Risk per trade (USD). Leave that blank and it falls back to % of equity.
-            </p>
+            <div className="space-y-4 rounded-md border border-emerald-200 bg-emerald-50/60 px-3 py-3">
+              <div className="space-y-2">
+                <Label htmlFor="risk_per_trade_usd" className="font-semibold">
+                  Max loss per trade (USD)
+                  <span className="text-xs text-slate-500 font-normal ml-2">(e.g. 6 = risk $6 if stop hits)</span>
+                </Label>
+                <Input
+                  id="risk_per_trade_usd"
+                  type="number"
+                  min="0.5"
+                  max="100000"
+                  step="0.5"
+                  value={settings.risk_per_trade_usd ?? ""}
+                  onChange={(e) => {
+                    const next = e.target.value ? parseFloat(e.target.value) : null;
+                    setSettings({
+                      ...settings,
+                      risk_per_trade_usd: next,
+                      // Keep hard USD stop ceiling in sync (negative).
+                      stop_loss_usd: next != null && next > 0 ? -Math.abs(next) : settings.stop_loss_usd,
+                    });
+                  }}
+                  className="w-full"
+                  placeholder="6"
+                />
+                <p className="text-xs text-slate-600">
+                  Position size is solved from your ATR stop so every trade risks about this much.
+                  Wider stop → smaller size. Change this anytime — also mirrored as Stop Loss (USD) below.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="risk_per_trade_pct" className="font-semibold">
+                  Fallback risk (% of equity)
+                </Label>
+                <Input
+                  id="risk_per_trade_pct"
+                  type="number"
+                  min="0.01"
+                  max="20"
+                  step="0.05"
+                  value={settings.risk_per_trade_pct}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      risk_per_trade_pct: parseFloat(e.target.value) || 0.5,
+                    })
+                  }
+                  className="w-full"
+                />
+                <p className="text-xs text-slate-500">
+                  Used only if Max loss (USD) is empty.
+                </p>
+              </div>
+            </div>
           )}
 
           {(settings.position_sizing_mode === "auto" || settings.position_sizing_mode === "target_profit") && (
@@ -605,15 +662,15 @@ export function TradingSettings() {
 
             <div className="space-y-2">
               <Label htmlFor="stop_loss_usd" className="font-semibold">
-                Stop Loss (USD) - Optional
-                <span className="text-xs text-slate-500 font-normal ml-2">(e.g., -18 for $18 max loss)</span>
+                Hard max loss (USD) — safety ceiling
+                <span className="text-xs text-slate-500 font-normal ml-2">(negative, e.g. -6)</span>
               </Label>
               <Input
                 id="stop_loss_usd"
                 type="number"
-                min="-10000"
+                min="-100000"
                 max="0"
-                step="0.01"
+                step="0.5"
                 value={settings.stop_loss_usd ?? ""}
                 onChange={(e) =>
                   setSettings({
@@ -622,11 +679,11 @@ export function TradingSettings() {
                   })
                 }
                 className="w-full"
-                placeholder="Leave empty to use percentage only"
+                placeholder="-6"
               />
               <p className="text-xs text-slate-500">
-                Maximum loss in USD per position (negative value, e.g., -18 means close if loss reaches $18). 
-                If set, position will close when EITHER percentage OR USD threshold is breached. Leave empty to use percentage only.
+                Emergency close if unrealized PnL hits this dollar loss (even if ATR stop has not).
+                In Risk mode this stays matched to Max loss per trade when you edit that field.
               </p>
             </div>
 
