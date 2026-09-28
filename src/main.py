@@ -1405,15 +1405,21 @@ def main():
             scalping_tp_percent = trading_settings.get("scalping_tp_percent", 5.0)
             scalping_sl_percent = trading_settings.get("scalping_sl_percent", 5.0)
             take_profit_strict_enforcement = trading_settings.get("take_profit_strict_enforcement", False)
-            stop_loss_usd = resolve_stop_loss_usd(trading_settings, default=-6.0)
+            stop_loss_usd = resolve_stop_loss_usd(trading_settings, default=-9.0)
+            exit_mode_now = str(trading_settings.get("exit_mode") or "atr").lower()
+            sizing_now = str(trading_settings.get("position_sizing_mode") or "risk").lower()
+            if exit_mode_now == "atr" and sizing_now == "risk":
+                risk_now = resolve_max_loss_usd(trading_settings, default=6.0)
+                stop_loss_usd = -abs(risk_now) * 1.5
             enable_stop_loss_orders = trading_settings.get("enable_stop_loss_orders", True)  # Enable automatic SL orders on exchange
             agent_manage_exits = bool(trading_settings.get("agent_manage_exits", CONFIG.get("agent_manage_exits", True)))
             if not agent_manage_exits:
                 add_event("🛡️  TP/SL-only close mode active: agent-driven exits are disabled.")
             add_event(
-                f"🛡️  Max loss ceiling: ${abs(float(stop_loss_usd)):.2f} "
-                f"(risk_per_trade_usd={trading_settings.get('risk_per_trade_usd')}, "
-                f"mode={trading_settings.get('position_sizing_mode')})"
+                f"🛡️  Max loss target: ${resolve_max_loss_usd(trading_settings, default=6.0):.2f} "
+                f"(USD gap buffer ${abs(float(stop_loss_usd)):.2f}, "
+                f"mode={sizing_now}/{exit_mode_now}, "
+                f"max_stop={trading_settings.get('max_stop_price_pct')}%)"
             )
             # Position sizing settings (target_profit_per_1pct_move, max_positions, position_sizing_mode) are in trading_settings dict
             # These come from database or .env file (TARGET_PROFIT_PER_1PCT_MOVE, MAX_POSITIONS, POSITION_SIZING_MODE)
@@ -3020,19 +3026,31 @@ def main():
                                     sl_price = calculated_sl
                                     add_event(f"🛡️  Calculated SL for {asset}: {sl_price:.4f} ({sl_percent}% from entry)")
 
-                            # Cap exchange SL so a fill cannot lose more than Max loss (USD).
+                            # Never yank an ATR stop down to a tight $ distance (chop killer).
                             try:
                                 max_loss = resolve_max_loss_usd(trading_settings, default=6.0)
+                                exit_src = str(trading_settings.get("exit_mode") or "atr").lower()
                                 capped_sl = tighten_sl_to_max_loss(
-                                    current_price, is_buy, actual_position_size, sl_price, max_loss
+                                    current_price,
+                                    is_buy,
+                                    actual_position_size,
+                                    sl_price,
+                                    max_loss,
+                                    allow_tighter_than_atr=(exit_src != "atr"),
                                 )
                                 if capped_sl is not None and (
                                     sl_price is None or abs(float(capped_sl) - float(sl_price or 0)) > 1e-12
                                 ):
-                                    add_event(
-                                        f"🛡️  Tightened SL for {asset} to ${float(capped_sl):.4f} "
-                                        f"(max loss ${max_loss:.2f})"
-                                    )
+                                    if exit_src == "atr":
+                                        add_event(
+                                            f"🛡️  Keeping wide ATR SL for {asset} at ${float(capped_sl):.4f} "
+                                            f"(risk-sized ≈ ${max_loss:.2f}; not pulling stop to 2%)"
+                                        )
+                                    else:
+                                        add_event(
+                                            f"🛡️  Tightened SL for {asset} to ${float(capped_sl):.4f} "
+                                            f"(max loss ${max_loss:.2f})"
+                                        )
                                     sl_price = capped_sl
                             except Exception as e:
                                 logging.debug(f"USD SL tighten skipped for {asset}: {e}")

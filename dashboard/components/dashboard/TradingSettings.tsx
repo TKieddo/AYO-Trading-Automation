@@ -361,8 +361,8 @@ export function TradingSettings() {
               <option value="fixed">Fixed (Use fixed allocation per position)</option>
             </select>
             <p className="text-xs text-slate-500">
-              Use Margin for a steady $30 size. Max loss (USD) still hard-closes / tightens the stop at -$6.
-              Risk mode intentionally uses smaller margin when the ATR stop is wide.
+              Choppy alts: use <b>Risk</b> + ATR exits (wide stop up to ~7%, smaller margin so $ risk stays ~$6).
+              Fixed $30 margin cannot also keep a 7% stop and only lose $6 — pick one.
             </p>
           </div>
 

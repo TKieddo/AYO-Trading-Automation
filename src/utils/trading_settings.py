@@ -53,9 +53,14 @@ def resolve_stop_loss_usd(trading_settings: Dict[str, Any], default: float = -6.
 def align_take_profit_to_risk(settings: Dict[str, Any], reward_multiple: float = 2.0) -> Dict[str, Any]:
     """Ensure take-profit targets at least ``reward_multiple`` × max loss (fixes $1 wins vs $6 losses)."""
     try:
+        tp_mode = str(settings.get("tp_mode") or "atr_rr").strip().lower()
+        # atr_rr already scales TP with the (wide) stop — do not force a tight $ TP.
+        if tp_mode in ("atr_rr", "atr", "rr", "r"):
+            settings["tp_mode"] = "atr_rr"
+            return settings
+
         max_loss = resolve_max_loss_usd(settings, default=6.0)
         target_tp = max(max_loss * float(reward_multiple or 2.0), max_loss)
-        tp_mode = str(settings.get("tp_mode") or "usd").strip().lower()
         margin = float(settings.get("margin_per_position") or CONFIG.get("margin_per_position") or 30.0)
 
         if tp_mode in ("usd", "dollar", "dollars", "$"):
@@ -96,8 +101,15 @@ def tighten_sl_to_max_loss(
     quantity: float,
     sl_price: Optional[float],
     max_loss_usd: float,
+    *,
+    allow_tighter_than_atr: bool = False,
 ) -> Optional[float]:
-    """Use the tighter of ATR/price SL and the USD max-loss price for this size."""
+    """Optionally pull SL closer so dollar loss ≤ max_loss_usd.
+
+    For choppy ATR stops, leave ``allow_tighter_than_atr=False`` (default): never pull an
+    existing ATR stop closer to entry — that recreates the 2% noise-stop problem. Only fill
+    in a missing SL from the USD budget.
+    """
     try:
         entry = float(entry_price or 0)
         qty = abs(float(quantity or 0))
@@ -114,6 +126,9 @@ def tighten_sl_to_max_loss(
         existing = float(sl_price)
     except (TypeError, ValueError):
         return usd_sl
+    if not allow_tighter_than_atr:
+        # Keep the wider (further from entry) stop — ATR room for chop.
+        return min(existing, usd_sl) if is_long else max(existing, usd_sl)
     # Tighter = closer to entry
     return max(existing, usd_sl) if is_long else min(existing, usd_sl)
 
@@ -192,7 +207,7 @@ async def get_trading_settings() -> Dict[str, Any]:
                         "margin_per_position": float(margin_per_pos) if margin_per_pos is not None else float(_coalesce(CONFIG.get("margin_per_position"), 30.0)),
                         "max_positions": int(data.get("max_positions", 6)),
                         "position_sizing_mode": _coalesce(
-                            data.get("position_sizing_mode"), CONFIG.get("position_sizing_mode"), "margin"
+                            data.get("position_sizing_mode"), CONFIG.get("position_sizing_mode"), "risk"
                         ),
                         "risk_per_trade_usd": _coalesce(
                             data.get("risk_per_trade_usd"), CONFIG.get("risk_per_trade_usd"), 6.0
@@ -205,15 +220,15 @@ async def get_trading_settings() -> Dict[str, Any]:
                         ),
                         # Volatility-adaptive exits
                         "exit_mode": _coalesce(data.get("exit_mode"), CONFIG.get("exit_mode"), "atr"),
-                        "tp_mode": _coalesce(data.get("tp_mode"), CONFIG.get("tp_mode"), "usd"),
+                        "tp_mode": _coalesce(data.get("tp_mode"), CONFIG.get("tp_mode"), "atr_rr"),
                         "take_profit_usd": _coalesce(
                             data.get("take_profit_usd"), CONFIG.get("take_profit_usd"), 12.0
                         ),
                         "sl_atr_mult": float(data.get("sl_atr_mult", CONFIG.get("sl_atr_mult", 2.0))),
-                        "tp_rr_ratio": float(data.get("tp_rr_ratio", CONFIG.get("tp_rr_ratio", 2.5))),
+                        "tp_rr_ratio": float(data.get("tp_rr_ratio", CONFIG.get("tp_rr_ratio", 2.0))),
                         "atr_period": int(data.get("atr_period", CONFIG.get("atr_period", 14))),
-                        "min_stop_price_pct": float(data.get("min_stop_price_pct", CONFIG.get("min_stop_price_pct", 0.6))),
-                        "max_stop_price_pct": float(data.get("max_stop_price_pct", CONFIG.get("max_stop_price_pct", 4.0))),
+                        "min_stop_price_pct": float(data.get("min_stop_price_pct", CONFIG.get("min_stop_price_pct", 1.5))),
+                        "max_stop_price_pct": float(data.get("max_stop_price_pct", CONFIG.get("max_stop_price_pct", 7.0))),
                         # Re-entry control
                         "reentry_cooldown_minutes": float(data.get("reentry_cooldown_minutes", CONFIG.get("reentry_cooldown_minutes", 45.0))),
                         "loss_reentry_cooldown_minutes": float(data.get("loss_reentry_cooldown_minutes", CONFIG.get("loss_reentry_cooldown_minutes", 90.0))),
@@ -269,9 +284,9 @@ async def get_trading_settings() -> Dict[str, Any]:
                         "scalping_sl_percent": float(data.get("scalping_sl_percent", 5.0)),
                         "auto_strategy_cache_minutes": int(data.get("auto_strategy_cache_minutes", 0)),
                         # Stop loss enforcement
-                        # Stop loss enforcement — never leave null (Coolify rows often have SQL NULL)
+                        # Stop loss enforcement — ATR+risk uses ~1.5× risk as gap buffer (not a 2% yank)
                         "stop_loss_usd": float(
-                            _coalesce(data.get("stop_loss_usd"), CONFIG.get("stop_loss_usd"), -6.0)
+                            _coalesce(data.get("stop_loss_usd"), CONFIG.get("stop_loss_usd"), -9.0)
                         ),
                         "take_profit_strict_enforcement": bool(data.get("take_profit_strict_enforcement", False)),
                         "hard_max_loss_cap_percent": float(data.get("hard_max_loss_cap_percent", 8.0)),
@@ -284,16 +299,30 @@ async def get_trading_settings() -> Dict[str, Any]:
                         "llm_model": data.get("llm_model", "deepseek-reasoner"),
                         "deepseek_max_tokens": int(data.get("deepseek_max_tokens", 20000)),
                     }
-                    # Keep hard USD stop at least as tight as Max loss per trade (Coolify NULLs / stale rows).
+                    # Keep hard USD stop as a slippage buffer past risk (do not yank ATR to 2%).
                     try:
                         risk_f = float(settings.get("risk_per_trade_usd") or 0)
+                        exit_mode = str(settings.get("exit_mode") or "atr").lower()
+                        sizing = str(settings.get("position_sizing_mode") or "risk").lower()
                         if risk_f > 0:
-                            desired_stop = -abs(risk_f)
+                            # ATR+risk: stop lives at ATR; USD check is ~1.5× risk for gaps/slippage.
+                            if exit_mode == "atr" and sizing == "risk":
+                                desired_stop = -abs(risk_f) * 1.5
+                            else:
+                                desired_stop = -abs(risk_f)
                             current_stop = settings.get("stop_loss_usd")
-                            if current_stop is None or float(current_stop) < desired_stop:
+                            if current_stop is None or float(current_stop) < desired_stop - 0.01:
+                                # Only raise a missing/way-too-loose ceiling; never force tighter than ATR path needs.
+                                pass
+                            if current_stop is None:
+                                settings["stop_loss_usd"] = desired_stop
+                            elif exit_mode != "atr" and float(current_stop) < desired_stop:
+                                settings["stop_loss_usd"] = desired_stop
+                            elif exit_mode == "atr" and sizing == "risk" and float(current_stop) > -abs(risk_f):
+                                # Ceiling tighter than risk would stop before ATR — loosen to buffer.
                                 settings["stop_loss_usd"] = desired_stop
                     except (TypeError, ValueError):
-                        settings["stop_loss_usd"] = -6.0
+                        settings["stop_loss_usd"] = -9.0
                     settings = align_take_profit_to_risk(settings, reward_multiple=2.0)
                     _save_cached_trading_settings(settings)
                     return _apply_env_bool_overrides(settings)
@@ -326,19 +355,19 @@ async def get_trading_settings() -> Dict[str, Any]:
         "allocation_per_position": CONFIG.get("allocation_per_position"),
         "margin_per_position": float(margin_per_pos) if margin_per_pos is not None else float(CONFIG.get("margin_per_position") or 30.0),
         "max_positions": CONFIG.get("max_positions", 6),
-        "position_sizing_mode": CONFIG.get("position_sizing_mode", "margin"),
+        "position_sizing_mode": CONFIG.get("position_sizing_mode", "risk"),
         "risk_per_trade_usd": CONFIG.get("risk_per_trade_usd", 6.0),
         "risk_per_trade_pct": CONFIG.get("risk_per_trade_pct", 0.5),
         "max_notional_per_position": CONFIG.get("max_notional_per_position"),
         # Volatility-adaptive exits
         "exit_mode": CONFIG.get("exit_mode", "atr"),
-        "tp_mode": CONFIG.get("tp_mode", "usd"),
+        "tp_mode": CONFIG.get("tp_mode", "atr_rr"),
         "take_profit_usd": CONFIG.get("take_profit_usd", 12.0),
         "sl_atr_mult": CONFIG.get("sl_atr_mult", 2.0),
-        "tp_rr_ratio": CONFIG.get("tp_rr_ratio", 2.5),
+        "tp_rr_ratio": CONFIG.get("tp_rr_ratio", 2.0),
         "atr_period": CONFIG.get("atr_period", 14),
-        "min_stop_price_pct": CONFIG.get("min_stop_price_pct", 0.6),
-        "max_stop_price_pct": CONFIG.get("max_stop_price_pct", 4.0),
+        "min_stop_price_pct": CONFIG.get("min_stop_price_pct", 1.5),
+        "max_stop_price_pct": CONFIG.get("max_stop_price_pct", 7.0),
         # Re-entry control
         "reentry_cooldown_minutes": CONFIG.get("reentry_cooldown_minutes", 45.0),
         "loss_reentry_cooldown_minutes": CONFIG.get("loss_reentry_cooldown_minutes", 90.0),
@@ -392,7 +421,7 @@ async def get_trading_settings() -> Dict[str, Any]:
         "scalping_sl_percent": CONFIG.get("scalping_sl_percent", 5.0),
         "auto_strategy_cache_minutes": CONFIG.get("auto_strategy_cache_minutes", 0),
         # Stop loss enforcement
-        "stop_loss_usd": CONFIG.get("stop_loss_usd", -6.0),  # Hard max loss in USD (e.g., -6)
+        "stop_loss_usd": CONFIG.get("stop_loss_usd", -9.0),  # Gap buffer; ATR+risk is the real stop
         "take_profit_strict_enforcement": CONFIG.get("take_profit_strict_enforcement", False),
         "hard_max_loss_cap_percent": float(CONFIG.get("stop_loss_percent", 8.0) or 8.0),
         "enable_stop_loss_orders": CONFIG.get("enable_stop_loss_orders", True),

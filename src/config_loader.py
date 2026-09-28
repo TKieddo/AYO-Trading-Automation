@@ -152,13 +152,13 @@ CONFIG = {
     "allocation_per_position": _get_float("ALLOCATION_PER_POSITION"),  # Fixed allocation per position (None = auto)
     "margin_per_position": _get_float("MARGIN_PER_POSITION", 30.0),  # Fixed margin when position_sizing_mode is "margin"
     "max_positions": _get_int("MAX_POSITIONS", 6),  # Maximum concurrent positions
-    "position_sizing_mode": _get_env("POSITION_SIZING_MODE", "margin"),  # margin | risk | auto | fixed | target_profit
+    "position_sizing_mode": _get_env("POSITION_SIZING_MODE", "risk"),  # margin | risk | auto | fixed | target_profit
     # Risk knobs: in margin mode these only cap the hard USD stop; in risk mode they also size the trade.
     "risk_per_trade_usd": _get_float("RISK_PER_TRADE_USD", 6.0),  # Max $ loss ceiling / risk-mode size target
     "risk_per_trade_pct": _get_float("RISK_PER_TRADE_PCT", 0.5),  # Fallback % of equity when USD not set
     "max_notional_per_position": _get_float("MAX_NOTIONAL_PER_POSITION"),  # Optional hard cap on notional exposure
     "min_notional_per_position": _get_float("MIN_NOTIONAL_PER_POSITION", 50.0),  # Floor so risk sizing never emits a sub-minimum order
-    "stop_loss_usd": _get_float("STOP_LOSS_USD", -6.0),  # Hard ceiling (negative); close if unrealized PnL hits this
+    "stop_loss_usd": _get_float("STOP_LOSS_USD", -9.0),  # Hard ceiling (negative); close if unrealized PnL hits this
     # LLM via DeepSeek API (replaces OpenRouter)
     "deepseek_api_key": _get_env("DEEPSEEK_API_KEY", required=True),
     "deepseek_base_url": _get_env("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
@@ -181,13 +181,13 @@ CONFIG = {
     # Volatility-adaptive exits (ATR-based). When enabled, the fixed TP/SL percentages are
     # replaced by distances derived from recent ATR, so the stop sits outside normal noise.
     "exit_mode": _get_env("EXIT_MODE", "atr"),  # "fixed" (legacy TP/SL %) or "atr" — controls STOP
-    "tp_mode": _get_env("TP_MODE", "usd"),  # atr_rr | roi_percent | usd
+    "tp_mode": _get_env("TP_MODE", "atr_rr"),  # atr_rr | roi_percent | usd
     "take_profit_usd": _get_float("TAKE_PROFIT_USD", 12.0),  # Absolute $ profit lock when tp_mode=usd
     "sl_atr_mult": _get_float("SL_ATR_MULT", 2.0),  # Stop distance = SL_ATR_MULT x ATR%
     "tp_rr_ratio": _get_float("TP_RR_RATIO", 2.0),  # Only used when tp_mode=atr_rr
     "atr_period": _get_int("ATR_PERIOD", 14),  # ATR lookback for exit sizing
-    "min_stop_price_pct": _get_float("MIN_STOP_PRICE_PCT", 0.6),  # Floor on stop distance (% of price)
-    "max_stop_price_pct": _get_float("MAX_STOP_PRICE_PCT", 4.0),  # Ceiling on stop distance (% of price)
+    "min_stop_price_pct": _get_float("MIN_STOP_PRICE_PCT", 1.5),  # Floor on stop distance (% of price)
+    "max_stop_price_pct": _get_float("MAX_STOP_PRICE_PCT", 7.0),  # Ceiling on stop distance (% of price)
     # Advanced position management
     "enable_trailing_stop": _get_bool("ENABLE_TRAILING_STOP", True),  # Enable trailing stop loss
     "trailing_stop_activation_r": _get_float("TRAILING_STOP_ACTIVATION_R", 1.0),  # Start trailing after X R of profit
