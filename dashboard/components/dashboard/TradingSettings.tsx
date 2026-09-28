@@ -55,7 +55,7 @@ interface TradingSettings {
 export function TradingSettings() {
   const [settings, setSettings] = useState<TradingSettings>({
     leverage: 10,
-    take_profit_percent: 5.0,
+    take_profit_percent: 40.0,
     stop_loss_percent: 3.0,
     target_profit_per_1pct_move: 1.0,
     allocation_per_position: null,
@@ -89,10 +89,10 @@ export function TradingSettings() {
     deepseek_max_tokens: 20000,
     next_public_base_url: "http://localhost:3001",
     stop_loss_usd: -6,
-    take_profit_usd: null,
+    take_profit_usd: 12,
     risk_per_trade_usd: 6,
     risk_per_trade_pct: 0.5,
-    tp_mode: "roi_percent",
+    tp_mode: "usd",
     take_profit_strict_enforcement: false,
     enable_stop_loss_orders: true,
   });
@@ -129,7 +129,7 @@ export function TradingSettings() {
         const data = await response.json();
         setSettings({
           leverage: data.leverage || 10,
-          take_profit_percent: data.take_profit_percent || 5.0,
+          take_profit_percent: data.take_profit_percent || 40.0,
           stop_loss_percent: data.stop_loss_percent || 3.0,
           target_profit_per_1pct_move: data.target_profit_per_1pct_move ?? 1.0,
           allocation_per_position: data.allocation_per_position ?? null,
@@ -158,10 +158,10 @@ export function TradingSettings() {
           scalping_sl_percent: data.scalping_sl_percent ?? 5.0,
           auto_strategy_cache_minutes: data.auto_strategy_cache_minutes ?? 0,
           stop_loss_usd: data.stop_loss_usd ?? -6,
-          take_profit_usd: data.take_profit_usd ?? null,
+          take_profit_usd: data.take_profit_usd ?? 12,
           risk_per_trade_usd: data.risk_per_trade_usd ?? 6,
           risk_per_trade_pct: data.risk_per_trade_pct ?? 0.5,
-          tp_mode: (data.tp_mode as TradingSettings["tp_mode"]) || "roi_percent",
+          tp_mode: (data.tp_mode as TradingSettings["tp_mode"]) || "usd",
           take_profit_strict_enforcement: data.take_profit_strict_enforcement ?? false,
           enable_stop_loss_orders: data.enable_stop_loss_orders ?? true,
           asset_leverage_overrides: data.asset_leverage_overrides || {},

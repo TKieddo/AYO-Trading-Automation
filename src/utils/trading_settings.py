@@ -50,6 +50,46 @@ def resolve_stop_loss_usd(trading_settings: Dict[str, Any], default: float = -6.
     return -abs(resolve_max_loss_usd(trading_settings, default=abs(default)))
 
 
+def align_take_profit_to_risk(settings: Dict[str, Any], reward_multiple: float = 2.0) -> Dict[str, Any]:
+    """Ensure take-profit targets at least ``reward_multiple`` × max loss (fixes $1 wins vs $6 losses)."""
+    try:
+        max_loss = resolve_max_loss_usd(settings, default=6.0)
+        target_tp = max(max_loss * float(reward_multiple or 2.0), max_loss)
+        tp_mode = str(settings.get("tp_mode") or "usd").strip().lower()
+        margin = float(settings.get("margin_per_position") or CONFIG.get("margin_per_position") or 30.0)
+
+        if tp_mode in ("usd", "dollar", "dollars", "$"):
+            settings["tp_mode"] = "usd"
+            current = settings.get("take_profit_usd")
+            try:
+                current_f = float(current) if current not in (None, "") else 0.0
+            except (TypeError, ValueError):
+                current_f = 0.0
+            if current_f < target_tp:
+                settings["take_profit_usd"] = target_tp
+                logging.info(
+                    f"🎯 Aligned take_profit_usd to ${target_tp:.2f} "
+                    f"(≥ {reward_multiple:g}× max loss ${max_loss:.2f})"
+                )
+        else:
+            # roi_percent: TP $ ≈ margin × (tp% / 100)
+            try:
+                tp_pct = float(settings.get("take_profit_percent") or 0)
+            except (TypeError, ValueError):
+                tp_pct = 0.0
+            tp_usd = margin * (tp_pct / 100.0) if margin > 0 else 0.0
+            if tp_usd < target_tp and margin > 0:
+                needed_pct = (target_tp / margin) * 100.0
+                settings["take_profit_percent"] = round(needed_pct, 2)
+                logging.info(
+                    f"🎯 Aligned take_profit_percent to {needed_pct:.1f}% "
+                    f"(≈ ${target_tp:.2f} on ${margin:.0f} margin, ≥ {reward_multiple:g}× risk)"
+                )
+    except Exception as e:
+        logging.debug(f"align_take_profit_to_risk skipped: {e}")
+    return settings
+
+
 def tighten_sl_to_max_loss(
     entry_price: float,
     is_long: bool,
@@ -143,7 +183,9 @@ async def get_trading_settings() -> Dict[str, Any]:
                     settings = {
                         # Position sizing
                         "leverage": int(data.get("leverage", 10)),
-                        "take_profit_percent": float(data.get("take_profit_percent", 5.0)),
+                        "take_profit_percent": float(
+                            _coalesce(data.get("take_profit_percent"), CONFIG.get("take_profit_percent"), 40.0)
+                        ),
                         "stop_loss_percent": float(data.get("stop_loss_percent", 3.0)),
                         "target_profit_per_1pct_move": float(data.get("target_profit_per_1pct_move", 1.0)),
                         "allocation_per_position": data.get("allocation_per_position"),
@@ -162,9 +204,11 @@ async def get_trading_settings() -> Dict[str, Any]:
                             data.get("max_notional_per_position"), CONFIG.get("max_notional_per_position")
                         ),
                         # Volatility-adaptive exits
-                        "exit_mode": data.get("exit_mode", CONFIG.get("exit_mode", "fixed")),
-                        "tp_mode": data.get("tp_mode", CONFIG.get("tp_mode", "roi_percent")),
-                        "take_profit_usd": data.get("take_profit_usd", CONFIG.get("take_profit_usd")),
+                        "exit_mode": _coalesce(data.get("exit_mode"), CONFIG.get("exit_mode"), "atr"),
+                        "tp_mode": _coalesce(data.get("tp_mode"), CONFIG.get("tp_mode"), "usd"),
+                        "take_profit_usd": _coalesce(
+                            data.get("take_profit_usd"), CONFIG.get("take_profit_usd"), 12.0
+                        ),
                         "sl_atr_mult": float(data.get("sl_atr_mult", CONFIG.get("sl_atr_mult", 2.0))),
                         "tp_rr_ratio": float(data.get("tp_rr_ratio", CONFIG.get("tp_rr_ratio", 2.5))),
                         "atr_period": int(data.get("atr_period", CONFIG.get("atr_period", 14))),
@@ -250,6 +294,7 @@ async def get_trading_settings() -> Dict[str, Any]:
                                 settings["stop_loss_usd"] = desired_stop
                     except (TypeError, ValueError):
                         settings["stop_loss_usd"] = -6.0
+                    settings = align_take_profit_to_risk(settings, reward_multiple=2.0)
                     _save_cached_trading_settings(settings)
                     return _apply_env_bool_overrides(settings)
                 else:
@@ -275,7 +320,7 @@ async def get_trading_settings() -> Dict[str, Any]:
     fallback_settings = {
         # Position sizing
         "leverage": CONFIG.get("default_leverage", 10),
-        "take_profit_percent": CONFIG.get("take_profit_percent", 5),
+        "take_profit_percent": CONFIG.get("take_profit_percent", 40),
         "stop_loss_percent": CONFIG.get("stop_loss_percent", 3),
         "target_profit_per_1pct_move": CONFIG.get("target_profit_per_1pct_move", 1.0),
         "allocation_per_position": CONFIG.get("allocation_per_position"),
@@ -286,9 +331,9 @@ async def get_trading_settings() -> Dict[str, Any]:
         "risk_per_trade_pct": CONFIG.get("risk_per_trade_pct", 0.5),
         "max_notional_per_position": CONFIG.get("max_notional_per_position"),
         # Volatility-adaptive exits
-        "exit_mode": CONFIG.get("exit_mode", "fixed"),
-        "tp_mode": CONFIG.get("tp_mode", "roi_percent"),
-        "take_profit_usd": CONFIG.get("take_profit_usd"),
+        "exit_mode": CONFIG.get("exit_mode", "atr"),
+        "tp_mode": CONFIG.get("tp_mode", "usd"),
+        "take_profit_usd": CONFIG.get("take_profit_usd", 12.0),
         "sl_atr_mult": CONFIG.get("sl_atr_mult", 2.0),
         "tp_rr_ratio": CONFIG.get("tp_rr_ratio", 2.5),
         "atr_period": CONFIG.get("atr_period", 14),
@@ -359,7 +404,7 @@ async def get_trading_settings() -> Dict[str, Any]:
         "llm_model": CONFIG.get("llm_model", "deepseek-reasoner"),
         "deepseek_max_tokens": CONFIG.get("deepseek_max_tokens", 20000),
     }
-    return _apply_env_bool_overrides(fallback_settings)
+    return _apply_env_bool_overrides(align_take_profit_to_risk(fallback_settings, reward_multiple=2.0))
 
 
 async def get_max_leverage_for_asset(exchange_api, asset: str) -> int:

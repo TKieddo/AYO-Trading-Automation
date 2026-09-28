@@ -136,7 +136,7 @@ CONFIG = {
     "okx_pos_mode": _get_env("OKX_POS_MODE", "net_mode"),  # net_mode | long_short_mode
     # Trading settings (can be overridden via database/frontend)
     "default_leverage": _get_int("DEFAULT_LEVERAGE", 10),  # Default leverage (will be capped by asset max)
-    "take_profit_percent": _get_int("TAKE_PROFIT_PERCENT", 5),  # Take profit percentage (e.g., 5 = 5%)
+    "take_profit_percent": _get_int("TAKE_PROFIT_PERCENT", 40),  # Take profit percentage (e.g., 5 = 5%)
     "stop_loss_percent": _get_int("STOP_LOSS_PERCENT", 8),  # Stop loss percentage - 8% for scalping (was 3%)
     "enable_stop_loss_orders": _get_bool("ENABLE_STOP_LOSS_ORDERS", True),  # Recommended ON: creates exchange-native SL protection orders
     "agent_manage_exits": _get_bool("AGENT_MANAGE_EXITS", True),  # If false, disables agent-driven exits (TP/SL-only close mode)
@@ -180,11 +180,11 @@ CONFIG = {
     "auto_strategy_cache_minutes": _get_int("AUTO_STRATEGY_CACHE_MINUTES", 0),  # 0 = re-evaluate every cycle, >0 = cache for X minutes
     # Volatility-adaptive exits (ATR-based). When enabled, the fixed TP/SL percentages are
     # replaced by distances derived from recent ATR, so the stop sits outside normal noise.
-    "exit_mode": _get_env("EXIT_MODE", "fixed"),  # "fixed" (legacy TP/SL %) or "atr" — controls STOP
-    "tp_mode": _get_env("TP_MODE", "roi_percent"),  # atr_rr | roi_percent | usd
-    "take_profit_usd": _get_float("TAKE_PROFIT_USD"),  # Absolute $ profit lock when tp_mode=usd
+    "exit_mode": _get_env("EXIT_MODE", "atr"),  # "fixed" (legacy TP/SL %) or "atr" — controls STOP
+    "tp_mode": _get_env("TP_MODE", "usd"),  # atr_rr | roi_percent | usd
+    "take_profit_usd": _get_float("TAKE_PROFIT_USD", 12.0),  # Absolute $ profit lock when tp_mode=usd
     "sl_atr_mult": _get_float("SL_ATR_MULT", 2.0),  # Stop distance = SL_ATR_MULT x ATR%
-    "tp_rr_ratio": _get_float("TP_RR_RATIO", 2.5),  # Only used when tp_mode=atr_rr
+    "tp_rr_ratio": _get_float("TP_RR_RATIO", 2.0),  # Only used when tp_mode=atr_rr
     "atr_period": _get_int("ATR_PERIOD", 14),  # ATR lookback for exit sizing
     "min_stop_price_pct": _get_float("MIN_STOP_PRICE_PCT", 0.6),  # Floor on stop distance (% of price)
     "max_stop_price_pct": _get_float("MAX_STOP_PRICE_PCT", 4.0),  # Ceiling on stop distance (% of price)
