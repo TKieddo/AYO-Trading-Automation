@@ -33,6 +33,17 @@ from src.utils.trend_filter import check_trend_agreement
 
 load_dotenv()
 
+
+def _safe_float(value, default: float = 0.0) -> float:
+    """float() that tolerates None / '' / bad LLM JSON (avoids TypeError on NoneType)."""
+    try:
+        if value is None or value == "":
+            return float(default)
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
 # Exit plan per open position (asset -> ExitPlan), set at entry so the monitor loop enforces
 # the same ATR-derived stop/target the position was sized against.
 _EXIT_PLANS: dict[str, ExitPlan] = {}
@@ -2730,18 +2741,21 @@ def main():
                     if not asset or asset not in decision_assets:
                         continue
                     action = output.get("action")
-                    current_price = asset_prices.get(asset, 0)
+                    current_price = _safe_float(asset_prices.get(asset), 0)
                     action = output["action"]
                     rationale = output.get("rationale", "")
                     if rationale:
                         add_event(f"Decision rationale for {asset}: {rationale}")
+                    if action in ("buy", "sell") and current_price <= 0:
+                        add_event(f"⏸️  SKIPPED {asset} {action.upper()}: no valid market price")
+                        continue
                     
                     # If trading is disabled, skip new entries but allow closing existing positions
                     if action in ("buy", "sell") and not trading_enabled:
                         # Check if this is closing an existing position or opening a new one
                         existing_position = None
                         for pos in positions:
-                            if pos.get('symbol') == asset and abs(float(pos.get('quantity', 0))) > 0:
+                            if pos.get('symbol') == asset and abs(_safe_float(pos.get('quantity'), 0)) > 0:
                                 existing_position = pos
                                 break
                         
@@ -2755,7 +2769,7 @@ def main():
                     
                     if action in ("buy", "sell"):
                         is_buy = action == "buy"
-                        llm_alloc_usd = float(output.get("allocation_usd", 0.0))
+                        llm_alloc_usd = _safe_float(output.get("allocation_usd"), 0.0)
                         
                         # CRITICAL: Check for existing positions and prevent unnecessary trades
                         # Find existing position for this asset
@@ -2769,16 +2783,16 @@ def main():
                             if tr.get('asset') == asset:
                                 existing_trade = tr
                                 existing_is_long = tr.get('is_long', True)
-                                entry_price = float(tr.get('entry_price', current_price))
+                                entry_price = _safe_float(tr.get('entry_price'), current_price)
                                 opened_at_str = tr.get('opened_at')
                                 break
                         
                         for pos in positions:
-                            if pos.get('symbol') == asset and abs(float(pos.get('quantity', 0))) > 0:
+                            if pos.get('symbol') == asset and abs(_safe_float(pos.get('quantity'), 0)) > 0:
                                 existing_position = pos
                                 # If we don't have trade record, determine direction from exchange
                                 if existing_is_long is None:
-                                    pos_quantity = float(pos.get('quantity', 0))
+                                    pos_quantity = _safe_float(pos.get('quantity'), 0)
                                     existing_is_long = pos_quantity > 0
                                 
                                 # Try to get opened_at from position's openTime if not in active_trades
@@ -2799,7 +2813,10 @@ def main():
                                 
                                 # Get entry price from position if not in trade record
                                 if not entry_price or entry_price == current_price:
-                                    entry_price = float(pos.get('entry_price') or pos.get('entryPrice') or current_price)
+                                    entry_price = _safe_float(
+                                        pos.get('entry_price') or pos.get('entryPrice'),
+                                        current_price,
+                                    )
                                 
                                 break
                         
@@ -2991,10 +3008,13 @@ def main():
                                 leverage_to_use,
                             )
                             risk_usd = alloc_usd * leverage_to_use * (active_exit_plan.stop_price_pct / 100.0)
+                            stop_pct = float(active_exit_plan.stop_price_pct or 0) or 1.0
+                            target_pct = float(active_exit_plan.target_price_pct or 0)
+                            reward_est = risk_usd * (target_pct / stop_pct) if target_pct > 0 else 0.0
                             add_event(
                                 f"🎯 RISK MODE: ${alloc_usd:.2f} margin × {leverage_to_use}x = "
                                 f"${alloc_usd * leverage_to_use:.2f} notional → risking ${risk_usd:.2f} "
-                                f"to make ${risk_usd * (active_exit_plan.target_price_pct / active_exit_plan.stop_price_pct):.2f}"
+                                f"to make ${reward_est:.2f}"
                             )
                             margin_per_position = max(float(margin_per_position or 0), alloc_usd)
                         else:
