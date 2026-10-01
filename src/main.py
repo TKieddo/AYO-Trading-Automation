@@ -27,7 +27,7 @@ except ImportError:
 from src.utils.formatting import format_number as fmt, format_size as fmt_sz
 from src.utils.prompt_utils import json_default, round_or_none, round_series
 from src.utils.trading_settings import get_trading_settings, get_max_leverage_for_asset, calculate_tp_sl_prices, calculate_allocation_usd, calculate_risk_based_allocation, resolve_stop_loss_usd, resolve_max_loss_usd, tighten_sl_to_max_loss
-from src.utils.volatility_stops import ExitPlan, build_exit_plan
+from src.utils.volatility_stops import ExitPlan, build_exit_plan, normalize_tp_mode
 from src.utils import reentry_guard, profit_ladder, risk_governor
 from src.utils.trend_filter import check_trend_agreement
 
@@ -2017,9 +2017,35 @@ def main():
 
                     tp_hit = False
                     sl_hit = False
-                    if pnl_percent >= effective_tp_percent:
+                    unrealized_pnl = float(pos.get("unrealized_pnl") or pos.get("pnl") or 0 or 0)
+                    tp_plan = _EXIT_PLANS.get(asset.upper())
+                    tp_mode = normalize_tp_mode(
+                        (tp_plan.tp_mode if tp_plan else None)
+                        or trading_settings.get("tp_mode")
+                        or "price_percent"
+                    )
+                    price_move_pct = None
+                    if entry_price and current_price:
+                        price_move_pct = (
+                            ((current_price - entry_price) / entry_price) * 100.0 if is_long
+                            else ((entry_price - current_price) / entry_price) * 100.0
+                        )
+
+                    if tp_mode == "price_percent" and price_move_pct is not None:
+                        price_tp = float(
+                            (tp_plan.target_price_pct if tp_plan and tp_plan.target_price_pct else 0)
+                            or effective_tp_percent
+                            or 0
+                        )
+                        if price_tp > 0 and price_move_pct >= price_tp:
+                            tp_hit = True
+                    elif tp_mode == "atr_rr" and tp_plan is not None and price_move_pct is not None:
+                        if price_move_pct >= float(tp_plan.target_price_pct or 0):
+                            tp_hit = True
+                    elif pnl_percent >= effective_tp_percent:
                         tp_hit = True
-                    elif pnl_percent <= -effective_sl_percent:
+
+                    if pnl_percent <= -effective_sl_percent:
                         sl_hit = True
 
                     if tp_price:
@@ -2504,27 +2530,84 @@ def main():
                 effective_tp_percent = scalping_tp_percent if is_scalping else tp_percent
                 effective_sl_percent = scalping_sl_percent if is_scalping else sl_percent
 
-                # ATR mode: target is a price distance at the configured R multiple of the stop.
                 tp_plan = _EXIT_PLANS.get(asset.upper())
-                if tp_plan is not None and tp_plan.source == "atr" and entry_price and current_price:
-                    effective_tp_percent = tp_plan.target_price_pct
-                    effective_sl_percent = tp_plan.stop_price_pct
-                    pnl_percent = (
+                tp_mode = normalize_tp_mode(
+                    (tp_plan.tp_mode if tp_plan else None)
+                    or trading_settings.get("tp_mode")
+                    or "price_percent"
+                )
+                take_profit_usd = None
+                if tp_plan and tp_plan.take_profit_usd is not None:
+                    take_profit_usd = float(tp_plan.take_profit_usd)
+                else:
+                    try:
+                        raw_tp_usd = trading_settings.get("take_profit_usd")
+                        take_profit_usd = float(raw_tp_usd) if raw_tp_usd not in (None, "") else None
+                    except (TypeError, ValueError):
+                        take_profit_usd = None
+
+                # Price move % of entry (what users mean by "5% take profit")
+                price_move_pct = None
+                if entry_price and current_price:
+                    price_move_pct = (
                         ((current_price - entry_price) / entry_price) * 100.0 if is_long
                         else ((entry_price - current_price) / entry_price) * 100.0
                     )
 
-                # Always respect UI take-profit % mechanically (both agent and TP/SL-only modes).
-                # Changing TP in the dashboard updates take_profit_percent / scalping_tp_percent.
-                if pnl_percent is not None and pnl_percent >= effective_tp_percent:
+                # ATR stop distance for SL checks only — do NOT replace UI TP with atr_rr target.
+                if tp_plan is not None and tp_plan.source == "atr":
+                    effective_sl_percent = tp_plan.stop_price_pct
+                    if tp_mode == "atr_rr" and price_move_pct is not None:
+                        # Compare price move to ATR R:R target (legacy)
+                        pass
+                    elif price_move_pct is not None and tp_mode == "price_percent":
+                        # Keep pnl_percent as margin ROI for logs; TP uses price_move_pct
+                        pass
+
+                margin_roi_percent = float(pnl_percent) if pnl_percent is not None else 0.0
+
+                # Always respect configured take-profit mechanically.
+                if tp_mode == "usd" and take_profit_usd and take_profit_usd > 0 and unrealized_pnl >= take_profit_usd:
                     tp_hit = True
                     should_take_profit = True
-                    profit_reason = f"Take Profit (UI): {pnl_percent:.2f}% >= {effective_tp_percent}%"
+                    profit_reason = f"Take Profit (USD): ${unrealized_pnl:.2f} >= ${take_profit_usd:g}"
                     add_event(
-                        f"🎯 TAKE PROFIT triggered for {asset}: {pnl_percent:.2f}% >= {effective_tp_percent}%"
+                        f"🎯 TAKE PROFIT triggered for {asset}: ${unrealized_pnl:.2f} >= ${take_profit_usd:g}"
                     )
+                elif tp_mode == "price_percent" and price_move_pct is not None:
+                    price_tp = float(
+                        (tp_plan.target_price_pct if tp_plan and tp_plan.target_price_pct else 0)
+                        or effective_tp_percent
+                        or 0
+                    )
+                    if price_tp > 0 and price_move_pct >= price_tp:
+                        tp_hit = True
+                        should_take_profit = True
+                        profit_reason = f"Take Profit (price %): {price_move_pct:.2f}% >= {price_tp:g}%"
+                        add_event(
+                            f"🎯 TAKE PROFIT triggered for {asset}: price +{price_move_pct:.2f}% >= {price_tp:g}%"
+                        )
+                elif tp_mode == "atr_rr" and tp_plan is not None and price_move_pct is not None:
+                    atr_tp = float(tp_plan.target_price_pct or 0)
+                    if atr_tp > 0 and price_move_pct >= atr_tp:
+                        tp_hit = True
+                        should_take_profit = True
+                        profit_reason = f"Take Profit (ATR R:R): {price_move_pct:.2f}% >= {atr_tp:.2f}% price"
+                        add_event(
+                            f"🎯 TAKE PROFIT triggered for {asset}: price move {price_move_pct:.2f}% >= ATR target {atr_tp:.2f}%"
+                        )
+                elif tp_mode == "roi_percent" and margin_roi_percent >= effective_tp_percent:
+                    tp_hit = True
+                    should_take_profit = True
+                    profit_reason = f"Take Profit (ROI%): {margin_roi_percent:.2f}% >= {effective_tp_percent}%"
+                    add_event(
+                        f"🎯 TAKE PROFIT triggered for {asset}: {margin_roi_percent:.2f}% ROI >= {effective_tp_percent}%"
+                    )
+                elif tp_mode not in ("usd", "price_percent", "atr_rr") and margin_roi_percent >= effective_tp_percent:
+                    tp_hit = True
+                    should_take_profit = True
+                    profit_reason = f"Take Profit (ROI%): {margin_roi_percent:.2f}% >= {effective_tp_percent}%"
                 elif agent_manage_exits and take_profit_strict_enforcement and pnl_percent is not None:
-                    # Kept for logging clarity when strict flag is on but TP not yet reached
                     pass
                 
                 # Check TP price hit
@@ -2850,8 +2933,27 @@ def main():
                         if active_exit_plan.source == "atr":
                             add_event(
                                 f"📐 {asset} exits from ATR {active_exit_plan.atr_pct:.2f}%: "
-                                f"stop {active_exit_plan.stop_price_pct:.2f}% / "
-                                f"target {active_exit_plan.target_price_pct:.2f}% of price"
+                                f"stop {active_exit_plan.stop_price_pct:.2f}% of price "
+                                f"(TP mode={active_exit_plan.tp_mode}, target {active_exit_plan.target_price_pct:.2f}% of price)"
+                            )
+                        if active_exit_plan.tp_mode == "usd" and active_exit_plan.take_profit_usd:
+                            add_event(
+                                f"🎯 {asset} TP mode=usd: lock at ${active_exit_plan.take_profit_usd:g} profit "
+                                f"(stop unchanged)"
+                            )
+                        elif active_exit_plan.tp_mode == "price_percent":
+                            add_event(
+                                f"🎯 {asset} TP mode=price_percent: lock at {active_exit_plan.target_price_pct:g}% of price"
+                            )
+                        elif active_exit_plan.tp_mode == "roi_percent":
+                            add_event(
+                                f"🎯 {asset} TP mode=roi_percent: lock at {active_exit_plan.target_roi_pct:g}% margin ROI "
+                                f"({active_exit_plan.target_price_pct:.3f}% of price)"
+                            )
+                        else:
+                            add_event(
+                                f"🎯 {asset} TP mode=atr_rr: target {active_exit_plan.target_price_pct:.2f}% of price "
+                                f"(~{active_exit_plan.target_roi_pct:.1f}% ROI)"
                             )
 
                         sizing_mode = str(trading_settings.get("position_sizing_mode", "margin") or "margin").lower()
@@ -3014,17 +3116,65 @@ def main():
                         sl_price = output.get("sl_price")
                         
                         if position_exists:
-                            # If agent didn't provide TP/SL, calculate from configured percentages
+                            # Prefer volatility / tp_mode exit plan so ATR stop + configured TP stay consistent.
+                            plan_sl = active_exit_plan.stop_price(current_price, is_buy) if active_exit_plan else None
+                            plan_tp = (
+                                active_exit_plan.target_price(
+                                    current_price, is_buy, quantity=actual_position_size
+                                )
+                                if active_exit_plan
+                                else None
+                            )
+
                             if not tp_price or not sl_price:
                                 calculated_tp, calculated_sl = calculate_tp_sl_prices(
                                     current_price, is_buy, tp_percent, sl_percent
                                 )
-                                if not tp_price:
-                                    tp_price = calculated_tp
-                                    add_event(f"📊 Calculated TP for {asset}: {tp_price:.4f} ({tp_percent}% from entry)")
                                 if not sl_price:
-                                    sl_price = calculated_sl
-                                    add_event(f"🛡️  Calculated SL for {asset}: {sl_price:.4f} ({sl_percent}% from entry)")
+                                    sl_price = plan_sl if plan_sl else calculated_sl
+                                    src = "ATR" if plan_sl else f"{sl_percent}%"
+                                    add_event(f"🛡️  Calculated SL for {asset}: {float(sl_price):.4f} ({src})")
+                                if not tp_price:
+                                    if plan_tp:
+                                        tp_price = plan_tp
+                                        if active_exit_plan.tp_mode == "usd":
+                                            add_event(
+                                                f"📊 Calculated TP for {asset}: {float(tp_price):.4f} "
+                                                f"(${active_exit_plan.take_profit_usd:g} USD lock)"
+                                            )
+                                        elif active_exit_plan.tp_mode == "price_percent":
+                                            add_event(
+                                                f"📊 Calculated TP for {asset}: {float(tp_price):.4f} "
+                                                f"({active_exit_plan.target_price_pct:g}% of price)"
+                                            )
+                                        elif active_exit_plan.tp_mode == "roi_percent":
+                                            add_event(
+                                                f"📊 Calculated TP for {asset}: {float(tp_price):.4f} "
+                                                f"({active_exit_plan.target_roi_pct:g}% margin ROI)"
+                                            )
+                                        else:
+                                            add_event(
+                                                f"📊 Calculated TP for {asset}: {float(tp_price):.4f} "
+                                                f"(ATR R:R {active_exit_plan.target_price_pct:.2f}% price)"
+                                            )
+                                    else:
+                                        tp_price = calculated_tp
+                                        add_event(f"📊 Calculated TP for {asset}: {tp_price:.4f} ({tp_percent}% from entry)")
+                            elif plan_sl and active_exit_plan.source == "atr":
+                                try:
+                                    if is_buy and float(sl_price) > float(plan_sl):
+                                        sl_price = plan_sl
+                                        add_event(f"🛡️  Widened SL to ATR stop for {asset}: {float(sl_price):.4f}")
+                                    elif (not is_buy) and float(sl_price) < float(plan_sl):
+                                        sl_price = plan_sl
+                                        add_event(f"🛡️  Widened SL to ATR stop for {asset}: {float(sl_price):.4f}")
+                                except (TypeError, ValueError):
+                                    pass
+                                if plan_tp and active_exit_plan.tp_mode in ("price_percent", "roi_percent", "usd", "atr_rr"):
+                                    tp_price = plan_tp
+                                    add_event(
+                                        f"🎯 Enforcing configured TP ({active_exit_plan.tp_mode}) for {asset}: {float(tp_price):.4f}"
+                                    )
 
                             # Never yank an ATR stop down to a tight $ distance (chop killer).
                             try:

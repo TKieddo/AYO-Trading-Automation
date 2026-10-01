@@ -47,7 +47,7 @@ interface TradingSettings {
   take_profit_usd: number | null;
   risk_per_trade_usd: number | null;
   risk_per_trade_pct: number;
-  tp_mode: "roi_percent" | "usd" | "atr_rr";
+  tp_mode: "price_percent" | "roi_percent" | "usd" | "atr_rr";
   take_profit_strict_enforcement: boolean;
   enable_stop_loss_orders: boolean;
 }
@@ -55,7 +55,7 @@ interface TradingSettings {
 export function TradingSettings() {
   const [settings, setSettings] = useState<TradingSettings>({
     leverage: 10,
-    take_profit_percent: 40.0,
+    take_profit_percent: 7.0,
     stop_loss_percent: 3.0,
     target_profit_per_1pct_move: 1.0,
     allocation_per_position: null,
@@ -92,7 +92,7 @@ export function TradingSettings() {
     take_profit_usd: 12,
     risk_per_trade_usd: 6,
     risk_per_trade_pct: 0.5,
-    tp_mode: "usd",
+    tp_mode: "price_percent",
     take_profit_strict_enforcement: false,
     enable_stop_loss_orders: true,
   });
@@ -161,7 +161,7 @@ export function TradingSettings() {
           take_profit_usd: data.take_profit_usd ?? 12,
           risk_per_trade_usd: data.risk_per_trade_usd ?? 6,
           risk_per_trade_pct: data.risk_per_trade_pct ?? 0.5,
-          tp_mode: (data.tp_mode as TradingSettings["tp_mode"]) || "usd",
+          tp_mode: (data.tp_mode as TradingSettings["tp_mode"]) || "price_percent",
           take_profit_strict_enforcement: data.take_profit_strict_enforcement ?? false,
           enable_stop_loss_orders: data.enable_stop_loss_orders ?? true,
           asset_leverage_overrides: data.asset_leverage_overrides || {},
@@ -604,12 +604,14 @@ export function TradingSettings() {
                 }
                 className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
               >
-                <option value="roi_percent">Margin ROI % (e.g. close at 7% profit)</option>
+                <option value="price_percent">Price % of entry (e.g. 5 = +5% price move)</option>
+                <option value="roi_percent">Margin ROI % (e.g. close at 7% on margin)</option>
                 <option value="usd">Fixed USD profit (e.g. close at $5)</option>
-                <option value="atr_rr">ATR R:R multiple (legacy, follows stop distance)</option>
+                <option value="atr_rr">ATR R:R multiple (legacy, often far — ignores %)</option>
               </select>
               <p className="text-xs text-slate-500">
                 Stop loss still uses ATR / stop settings unchanged. This only controls when profit is locked.
+                Use Price % if you want your 5%/7% take-profit field to mean price movement.
               </p>
             </div>
 
@@ -617,7 +619,13 @@ export function TradingSettings() {
               <div className="space-y-2">
                 <Label htmlFor="take_profit" className="font-semibold">
                   Take Profit Percentage
-                  <span className="text-xs text-slate-500 font-normal ml-2">(margin ROI, 0.1-100%)</span>
+                  <span className="text-xs text-slate-500 font-normal ml-2">
+                    {settings.tp_mode === "price_percent"
+                      ? "(of entry price, 0.1-100%)"
+                      : settings.tp_mode === "roi_percent"
+                        ? "(margin ROI, 0.1-100%)"
+                        : "(fallback only for ATR R:R)"}
+                  </span>
                 </Label>
                 <Input
                   id="take_profit"
@@ -635,9 +643,11 @@ export function TradingSettings() {
                   className="w-full"
                 />
                 <p className="text-xs text-slate-500">
-                  {settings.tp_mode === "atr_rr"
-                    ? "Only used if ATR target cannot be computed. Prefer switching to Margin ROI % for scalping."
-                    : "Close when margin ROI reaches this %. Example: 7 = lock at +7% on your margin (not price %)."}
+                  {settings.tp_mode === "price_percent"
+                    ? "Close when price moves this % from entry. Example: 7 = lock at +7% of price."
+                    : settings.tp_mode === "atr_rr"
+                      ? "Ignored while ATR R:R is selected — switch to Price % to respect this field."
+                      : "Close when margin ROI reaches this %. At 10x, 7% ROI ≈ 0.7% price move."}
                 </p>
               </div>
             )}

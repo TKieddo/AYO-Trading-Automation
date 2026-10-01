@@ -51,20 +51,25 @@ def resolve_stop_loss_usd(trading_settings: Dict[str, Any], default: float = -6.
 
 
 def align_take_profit_to_risk(settings: Dict[str, Any], reward_multiple: float = 2.0) -> Dict[str, Any]:
-    """Ensure take-profit targets at least ``reward_multiple`` × max loss (fixes $1 wins vs $6 losses)."""
+    """Ensure take-profit targets at least ``reward_multiple`` × max loss (fixes $1 wins vs $6 losses).
+
+    Skipped for ``price_percent`` and ``atr_rr`` — those modes already express an intentional
+    price target and must not rewrite the user's TAKE_PROFIT_PERCENT.
+    """
     try:
-        tp_mode = str(settings.get("tp_mode") or "atr_rr").strip().lower()
-        # atr_rr already scales TP with the (wide) stop — do not force a tight $ TP.
-        if tp_mode in ("atr_rr", "atr", "rr", "r"):
-            settings["tp_mode"] = "atr_rr"
+        from src.utils.volatility_stops import normalize_tp_mode
+
+        tp_mode = normalize_tp_mode(settings.get("tp_mode") or "price_percent")
+        settings["tp_mode"] = tp_mode
+        # User-facing price % and ATR R:R are intentional — never rewrite the %.
+        if tp_mode in ("price_percent", "atr_rr"):
             return settings
 
         max_loss = resolve_max_loss_usd(settings, default=6.0)
         target_tp = max(max_loss * float(reward_multiple or 2.0), max_loss)
         margin = float(settings.get("margin_per_position") or CONFIG.get("margin_per_position") or 30.0)
 
-        if tp_mode in ("usd", "dollar", "dollars", "$"):
-            settings["tp_mode"] = "usd"
+        if tp_mode == "usd":
             current = settings.get("take_profit_usd")
             try:
                 current_f = float(current) if current not in (None, "") else 0.0
@@ -76,7 +81,7 @@ def align_take_profit_to_risk(settings: Dict[str, Any], reward_multiple: float =
                     f"🎯 Aligned take_profit_usd to ${target_tp:.2f} "
                     f"(≥ {reward_multiple:g}× max loss ${max_loss:.2f})"
                 )
-        else:
+        elif tp_mode == "roi_percent":
             # roi_percent: TP $ ≈ margin × (tp% / 100)
             try:
                 tp_pct = float(settings.get("take_profit_percent") or 0)
@@ -87,7 +92,7 @@ def align_take_profit_to_risk(settings: Dict[str, Any], reward_multiple: float =
                 needed_pct = (target_tp / margin) * 100.0
                 settings["take_profit_percent"] = round(needed_pct, 2)
                 logging.info(
-                    f"🎯 Aligned take_profit_percent to {needed_pct:.1f}% "
+                    f"🎯 Aligned take_profit_percent (ROI) to {needed_pct:.1f}% "
                     f"(≈ ${target_tp:.2f} on ${margin:.0f} margin, ≥ {reward_multiple:g}× risk)"
                 )
     except Exception as e:
@@ -199,7 +204,7 @@ async def get_trading_settings() -> Dict[str, Any]:
                         # Position sizing
                         "leverage": int(data.get("leverage", 10)),
                         "take_profit_percent": float(
-                            _coalesce(data.get("take_profit_percent"), CONFIG.get("take_profit_percent"), 40.0)
+                            _coalesce(data.get("take_profit_percent"), CONFIG.get("take_profit_percent"), 7.0)
                         ),
                         "stop_loss_percent": float(data.get("stop_loss_percent", 3.0)),
                         "target_profit_per_1pct_move": float(data.get("target_profit_per_1pct_move", 1.0)),
@@ -220,7 +225,7 @@ async def get_trading_settings() -> Dict[str, Any]:
                         ),
                         # Volatility-adaptive exits
                         "exit_mode": _coalesce(data.get("exit_mode"), CONFIG.get("exit_mode"), "atr"),
-                        "tp_mode": _coalesce(data.get("tp_mode"), CONFIG.get("tp_mode"), "atr_rr"),
+                        "tp_mode": _coalesce(data.get("tp_mode"), CONFIG.get("tp_mode"), "price_percent"),
                         "take_profit_usd": _coalesce(
                             data.get("take_profit_usd"), CONFIG.get("take_profit_usd"), 12.0
                         ),
@@ -349,7 +354,7 @@ async def get_trading_settings() -> Dict[str, Any]:
     fallback_settings = {
         # Position sizing
         "leverage": CONFIG.get("default_leverage", 10),
-        "take_profit_percent": CONFIG.get("take_profit_percent", 40),
+        "take_profit_percent": CONFIG.get("take_profit_percent", 7),
         "stop_loss_percent": CONFIG.get("stop_loss_percent", 3),
         "target_profit_per_1pct_move": CONFIG.get("target_profit_per_1pct_move", 1.0),
         "allocation_per_position": CONFIG.get("allocation_per_position"),
@@ -361,7 +366,7 @@ async def get_trading_settings() -> Dict[str, Any]:
         "max_notional_per_position": CONFIG.get("max_notional_per_position"),
         # Volatility-adaptive exits
         "exit_mode": CONFIG.get("exit_mode", "atr"),
-        "tp_mode": CONFIG.get("tp_mode", "atr_rr"),
+        "tp_mode": CONFIG.get("tp_mode", "price_percent"),
         "take_profit_usd": CONFIG.get("take_profit_usd", 12.0),
         "sl_atr_mult": CONFIG.get("sl_atr_mult", 2.0),
         "tp_rr_ratio": CONFIG.get("tp_rr_ratio", 2.0),

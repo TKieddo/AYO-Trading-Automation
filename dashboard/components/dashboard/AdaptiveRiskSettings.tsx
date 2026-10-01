@@ -49,11 +49,12 @@ const SECTIONS: Section[] = [
         key: "tp_mode",
         label: "Take-profit mode",
         type: "select",
-        help: "roi_percent = close at TAKE_PROFIT_PERCENT margin ROI. usd = close at TAKE_PROFIT_USD. atr_rr = legacy R-multiple of the ATR stop.",
+        help: "price_percent = close when price moves TAKE_PROFIT_PERCENT % (5 = +5% of entry). roi_percent = margin ROI. usd = TAKE_PROFIT_USD. atr_rr = far R-multiple of ATR stop (ignores %).",
         options: [
-          { value: "roi_percent", label: "Margin ROI % (recommended for scalping)" },
+          { value: "price_percent", label: "Price % of entry (recommended)" },
+          { value: "roi_percent", label: "Margin ROI %" },
           { value: "usd", label: "Fixed USD profit" },
-          { value: "atr_rr", label: "ATR R:R multiple (legacy)" },
+          { value: "atr_rr", label: "ATR R:R multiple (legacy, often far)" },
         ],
       },
       {

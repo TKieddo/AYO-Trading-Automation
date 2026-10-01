@@ -5,9 +5,10 @@ The legacy exits compare against margin ROI, so a "3% stop" at 10x leverage is r
 recent ATR in *price* terms, then convert to ROI only where the existing checks need it.
 
 Take-profit can be decoupled from the stop via ``tp_mode``:
-  - ``atr_rr``      — target = TP_RR_RATIO × stop (legacy ATR behaviour)
-  - ``roi_percent`` — lock in at TAKE_PROFIT_PERCENT margin ROI (scalping-friendly)
-  - ``usd``         — lock in when unrealized PnL reaches TAKE_PROFIT_USD
+  - ``price_percent`` — lock when price moves TAKE_PROFIT_PERCENT % (what users usually mean by 5%/7%)
+  - ``roi_percent``   — lock at TAKE_PROFIT_PERCENT margin ROI
+  - ``usd``           — lock when unrealized PnL reaches TAKE_PROFIT_USD
+  - ``atr_rr``        — target = TP_RR_RATIO × stop (often far; ignores the % field)
 The stop always follows ``exit_mode`` (atr / fixed) and is not changed by ``tp_mode``.
 """
 
@@ -32,7 +33,7 @@ class ExitPlan:
     target_roi_pct: float       # Same target, expressed as % of margin (0 when usd-only)
     atr_pct: Optional[float]    # ATR% used to derive it (None = fell back to fixed)
     source: str                 # "atr" or "fixed" — describes the STOP only
-    tp_mode: str = "roi_percent"  # atr_rr | roi_percent | usd
+    tp_mode: str = "price_percent"  # price_percent | atr_rr | roi_percent | usd
     take_profit_usd: Optional[float] = None  # Absolute $ target when tp_mode=usd
 
     def stop_price(self, entry_price: float, is_long: bool) -> float:
@@ -63,22 +64,26 @@ class ExitPlan:
 
 def normalize_tp_mode(raw: Any) -> str:
     """Canonical take-profit mode string."""
-    mode = str(raw or "roi_percent").strip().lower()
+    mode = str(raw or "price_percent").strip().lower()
     aliases = {
         "atr": "atr_rr",
         "rr": "atr_rr",
         "r": "atr_rr",
-        "percent": "roi_percent",
-        "pct": "roi_percent",
+        "percent": "price_percent",
+        "pct": "price_percent",
+        "price": "price_percent",
+        "price_pct": "price_percent",
+        "price%": "price_percent",
         "roi": "roi_percent",
         "margin": "roi_percent",
+        "margin_roi": "roi_percent",
         "dollar": "usd",
         "dollars": "usd",
         "$": "usd",
     }
     mode = aliases.get(mode, mode)
-    if mode not in ("atr_rr", "roi_percent", "usd"):
-        return "roi_percent"
+    if mode not in ("atr_rr", "roi_percent", "usd", "price_percent"):
+        return "price_percent"
     return mode
 
 
@@ -123,17 +128,16 @@ def build_exit_plan(
 ) -> ExitPlan:
     """Resolve stop/target distances for a trade.
 
-    Stop follows ``exit_mode`` (atr / fixed). Take-profit follows ``tp_mode`` independently
-    so scalping can lock at a fixed ROI% or $ while the stop stays ATR-wide.
+    Stop follows ``exit_mode`` (atr / fixed). Take-profit follows ``tp_mode`` independently.
     """
     leverage = max(float(leverage or 1.0), 1.0)
     mode = str(trading_settings.get("exit_mode") or CONFIG.get("exit_mode", "fixed")).lower()
     tp_mode = normalize_tp_mode(
-        trading_settings.get("tp_mode") or CONFIG.get("tp_mode") or "roi_percent"
+        trading_settings.get("tp_mode") or CONFIG.get("tp_mode") or "price_percent"
     )
 
     fixed_sl_roi = float(trading_settings.get("stop_loss_percent") or CONFIG.get("stop_loss_percent", 8) or 8)
-    fixed_tp_roi = float(trading_settings.get("take_profit_percent") or CONFIG.get("take_profit_percent", 7) or 7)
+    fixed_tp_pct = float(trading_settings.get("take_profit_percent") or CONFIG.get("take_profit_percent", 7) or 7)
     take_profit_usd_raw = trading_settings.get("take_profit_usd", CONFIG.get("take_profit_usd"))
     try:
         take_profit_usd = float(take_profit_usd_raw) if take_profit_usd_raw not in (None, "") else None
@@ -164,20 +168,23 @@ def build_exit_plan(
         target_roi_pct = target_price_pct * leverage
         tp_usd = None
     elif tp_mode == "usd":
-        # Price % unknown until size is known; mechanical loop uses $ PnL directly.
         target_price_pct = 0.0
         target_roi_pct = 0.0
         tp_usd = take_profit_usd
         if tp_usd is None:
-            # Fall back to ROI% if USD not configured so we never leave a trade without a TP.
-            logger.warning("tp_mode=usd but take_profit_usd unset; falling back to roi_percent")
-            tp_mode = "roi_percent"
-            target_price_pct = fixed_tp_roi / leverage
-            target_roi_pct = fixed_tp_roi
+            logger.warning("tp_mode=usd but take_profit_usd unset; falling back to price_percent")
+            tp_mode = "price_percent"
+            target_price_pct = fixed_tp_pct
+            target_roi_pct = fixed_tp_pct * leverage
+    elif tp_mode == "roi_percent":
+        # Margin ROI (e.g. 40% of $30 margin)
+        target_price_pct = fixed_tp_pct / leverage
+        target_roi_pct = fixed_tp_pct
+        tp_usd = None
     else:
-        # roi_percent — TAKE_PROFIT_PERCENT is margin ROI (what the dashboard label means for scalping)
-        target_price_pct = fixed_tp_roi / leverage
-        target_roi_pct = fixed_tp_roi
+        # price_percent — 5 means +5% of entry price (user-facing default)
+        target_price_pct = fixed_tp_pct
+        target_roi_pct = fixed_tp_pct * leverage
         tp_usd = None
 
     return ExitPlan(
