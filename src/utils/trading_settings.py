@@ -23,31 +23,48 @@ def _coalesce(*values: Any) -> Any:
 
 
 def resolve_max_loss_usd(trading_settings: Dict[str, Any], default: float = 6.0) -> float:
-    """Positive dollar amount of max allowed loss per trade."""
-    stop = trading_settings.get("stop_loss_usd")
-    risk = trading_settings.get("risk_per_trade_usd")
-    if stop is not None:
+    """Hard max $ loss per trade — what the user set as risk.
+
+    Prefers ``risk_per_trade_usd``. If ``stop_loss_usd`` is also set, uses the
+    *tighter* (smaller) of the two so a gap-buffer of -9 never raises a $6 risk to $9.
+    """
+    candidates: list[float] = []
+    for key in ("risk_per_trade_usd", "stop_loss_usd"):
+        raw = trading_settings.get(key)
+        if raw is None or raw == "":
+            continue
         try:
-            stop_f = float(stop)
-            if stop_f < 0:
-                return abs(stop_f)
-            if stop_f > 0:
-                return stop_f
+            val = abs(float(raw))
         except (TypeError, ValueError):
-            pass
-    if risk is not None:
-        try:
-            risk_f = float(risk)
-            if risk_f > 0:
-                return risk_f
-        except (TypeError, ValueError):
-            pass
+            continue
+        if val > 0:
+            candidates.append(val)
+    if candidates:
+        return min(candidates)
     return float(default)
 
 
 def resolve_stop_loss_usd(trading_settings: Dict[str, Any], default: float = -6.0) -> float:
-    """Negative USD stop ceiling used by mechanical close checks."""
+    """Negative USD stop ceiling used by mechanical close checks (hard, no buffer)."""
     return -abs(resolve_max_loss_usd(trading_settings, default=abs(default)))
+
+
+def projected_loss_at_stop(
+    entry_price: float,
+    quantity: float,
+    stop_price_pct: float,
+) -> float:
+    """Dollar loss if price moves ``stop_price_pct`` % against the position."""
+    try:
+        entry = float(entry_price or 0)
+        qty = abs(float(quantity or 0))
+        stop_pct = abs(float(stop_price_pct or 0))
+    except (TypeError, ValueError):
+        return 0.0
+    if entry <= 0 or qty <= 0 or stop_pct <= 0:
+        return 0.0
+    notional = entry * qty
+    return notional * (stop_pct / 100.0)
 
 
 def align_take_profit_to_risk(settings: Dict[str, Any], reward_multiple: float = 2.0) -> Dict[str, Any]:
@@ -107,13 +124,12 @@ def tighten_sl_to_max_loss(
     sl_price: Optional[float],
     max_loss_usd: float,
     *,
-    allow_tighter_than_atr: bool = False,
+    allow_tighter_than_atr: bool = True,
 ) -> Optional[float]:
-    """Optionally pull SL closer so dollar loss ≤ max_loss_usd.
+    """Pull SL so dollar loss at the stop ≤ max_loss_usd.
 
-    For choppy ATR stops, leave ``allow_tighter_than_atr=False`` (default): never pull an
-    existing ATR stop closer to entry — that recreates the 2% noise-stop problem. Only fill
-    in a missing SL from the USD budget.
+    Default ``allow_tighter_than_atr=True``: the user's $ risk is law. If an ATR stop
+    would lose more than max_loss_usd on this size, the stop is yanked closer.
     """
     try:
         entry = float(entry_price or 0)
@@ -134,7 +150,7 @@ def tighten_sl_to_max_loss(
     if not allow_tighter_than_atr:
         # Keep the wider (further from entry) stop — ATR room for chop.
         return min(existing, usd_sl) if is_long else max(existing, usd_sl)
-    # Tighter = closer to entry
+    # Tighter = closer to entry (respect $ risk)
     return max(existing, usd_sl) if is_long else min(existing, usd_sl)
 
 
@@ -291,7 +307,7 @@ async def get_trading_settings() -> Dict[str, Any]:
                         # Stop loss enforcement
                         # Stop loss enforcement — ATR+risk uses ~1.5× risk as gap buffer (not a 2% yank)
                         "stop_loss_usd": float(
-                            _coalesce(data.get("stop_loss_usd"), CONFIG.get("stop_loss_usd"), -9.0)
+                            _coalesce(data.get("stop_loss_usd"), CONFIG.get("stop_loss_usd"), -6.0)
                         ),
                         "take_profit_strict_enforcement": bool(data.get("take_profit_strict_enforcement", False)),
                         "hard_max_loss_cap_percent": float(data.get("hard_max_loss_cap_percent", 8.0)),
@@ -304,30 +320,26 @@ async def get_trading_settings() -> Dict[str, Any]:
                         "llm_model": data.get("llm_model", "deepseek-reasoner"),
                         "deepseek_max_tokens": int(data.get("deepseek_max_tokens", 20000)),
                     }
-                    # Keep hard USD stop as a slippage buffer past risk (do not yank ATR to 2%).
+                    # Keep hard USD stop aligned to risk_per_trade_usd (never looser).
                     try:
                         risk_f = float(settings.get("risk_per_trade_usd") or 0)
-                        exit_mode = str(settings.get("exit_mode") or "atr").lower()
-                        sizing = str(settings.get("position_sizing_mode") or "risk").lower()
                         if risk_f > 0:
-                            # ATR+risk: stop lives at ATR; USD check is ~1.5× risk for gaps/slippage.
-                            if exit_mode == "atr" and sizing == "risk":
-                                desired_stop = -abs(risk_f) * 1.5
-                            else:
-                                desired_stop = -abs(risk_f)
+                            desired_stop = -abs(risk_f)
                             current_stop = settings.get("stop_loss_usd")
-                            if current_stop is None or float(current_stop) < desired_stop - 0.01:
-                                # Only raise a missing/way-too-loose ceiling; never force tighter than ATR path needs.
-                                pass
                             if current_stop is None:
                                 settings["stop_loss_usd"] = desired_stop
-                            elif exit_mode != "atr" and float(current_stop) < desired_stop:
-                                settings["stop_loss_usd"] = desired_stop
-                            elif exit_mode == "atr" and sizing == "risk" and float(current_stop) > -abs(risk_f):
-                                # Ceiling tighter than risk would stop before ATR — loosen to buffer.
-                                settings["stop_loss_usd"] = desired_stop
+                            else:
+                                try:
+                                    cur = float(current_stop)
+                                except (TypeError, ValueError):
+                                    cur = desired_stop
+                                # Use the tighter ceiling (closer to zero / smaller abs loss).
+                                if cur >= 0 or abs(cur) > risk_f + 0.01:
+                                    settings["stop_loss_usd"] = desired_stop
                     except (TypeError, ValueError):
-                        settings["stop_loss_usd"] = -9.0
+                        settings["stop_loss_usd"] = -abs(
+                            float(settings.get("risk_per_trade_usd") or CONFIG.get("risk_per_trade_usd") or 6.0)
+                        )
                     settings = align_take_profit_to_risk(settings, reward_multiple=2.0)
                     _save_cached_trading_settings(settings)
                     return _apply_env_bool_overrides(settings)
@@ -426,7 +438,7 @@ async def get_trading_settings() -> Dict[str, Any]:
         "scalping_sl_percent": CONFIG.get("scalping_sl_percent", 5.0),
         "auto_strategy_cache_minutes": CONFIG.get("auto_strategy_cache_minutes", 0),
         # Stop loss enforcement
-        "stop_loss_usd": CONFIG.get("stop_loss_usd", -9.0),  # Gap buffer; ATR+risk is the real stop
+        "stop_loss_usd": CONFIG.get("stop_loss_usd", -6.0),  # Hard $ close = risk_per_trade_usd
         "take_profit_strict_enforcement": CONFIG.get("take_profit_strict_enforcement", False),
         "hard_max_loss_cap_percent": float(CONFIG.get("stop_loss_percent", 8.0) or 8.0),
         "enable_stop_loss_orders": CONFIG.get("enable_stop_loss_orders", True),

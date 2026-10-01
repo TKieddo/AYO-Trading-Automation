@@ -1405,21 +1405,20 @@ def main():
             scalping_tp_percent = trading_settings.get("scalping_tp_percent", 5.0)
             scalping_sl_percent = trading_settings.get("scalping_sl_percent", 5.0)
             take_profit_strict_enforcement = trading_settings.get("take_profit_strict_enforcement", False)
-            stop_loss_usd = resolve_stop_loss_usd(trading_settings, default=-9.0)
+            stop_loss_usd = resolve_stop_loss_usd(trading_settings, default=-6.0)
+            # Hard $ close = risk_per_trade_usd exactly (no 1.5× buffer).
+            max_loss_usd = resolve_max_loss_usd(trading_settings, default=6.0)
+            stop_loss_usd = -abs(max_loss_usd)
             exit_mode_now = str(trading_settings.get("exit_mode") or "atr").lower()
             sizing_now = str(trading_settings.get("position_sizing_mode") or "risk").lower()
-            if exit_mode_now == "atr" and sizing_now == "risk":
-                risk_now = resolve_max_loss_usd(trading_settings, default=6.0)
-                stop_loss_usd = -abs(risk_now) * 1.5
             enable_stop_loss_orders = trading_settings.get("enable_stop_loss_orders", True)  # Enable automatic SL orders on exchange
             agent_manage_exits = bool(trading_settings.get("agent_manage_exits", CONFIG.get("agent_manage_exits", True)))
             if not agent_manage_exits:
                 add_event("🛡️  TP/SL-only close mode active: agent-driven exits are disabled.")
             add_event(
-                f"🛡️  Max loss target: ${resolve_max_loss_usd(trading_settings, default=6.0):.2f} "
-                f"(USD gap buffer ${abs(float(stop_loss_usd)):.2f}, "
-                f"mode={sizing_now}/{exit_mode_now}, "
-                f"max_stop={trading_settings.get('max_stop_price_pct')}%)"
+                f"🛡️  HARD max loss: ${max_loss_usd:.2f} "
+                f"(mode={sizing_now}/{exit_mode_now}, "
+                f"UI SL%={sl_percent}, max_stop={trading_settings.get('max_stop_price_pct')}%)"
             )
             # Position sizing settings (target_profit_per_1pct_move, max_positions, position_sizing_mode) are in trading_settings dict
             # These come from database or .env file (TARGET_PROFIT_PER_1PCT_MOVE, MAX_POSITIONS, POSITION_SIZING_MODE)
@@ -1474,11 +1473,9 @@ def main():
                 current_strategy_name = agent.get_name()
                 is_scalping = "scalping" in current_strategy_name.lower()
                 
-                # Get stop loss threshold (scalping or regular) — from UI/DB settings
-                effective_sl_percent = scalping_sl_percent if is_scalping else sl_percent
+                # Get UI stop loss % (scalping or regular) — ALWAYS enforced on margin ROI.
+                ui_sl_percent = float(scalping_sl_percent if is_scalping else sl_percent)
 
-                # ATR mode: the stop is a price distance, so compare the raw price move against
-                # it rather than the leveraged ROI (which triggers ~`leverage` times too early).
                 exit_plan = _EXIT_PLANS.get(asset.upper())
                 atr_stop_active = (
                     exit_plan is not None
@@ -1486,39 +1483,67 @@ def main():
                     and entry_price > 0
                     and current_price > 0
                 )
-                if atr_stop_active:
-                    effective_sl_percent = exit_plan.stop_price_pct
-                    pnl_percent = (
+                price_move_pct = None
+                if entry_price > 0 and current_price > 0:
+                    price_move_pct = (
                         ((current_price - entry_price) / entry_price) * 100.0 if is_long
                         else ((entry_price - current_price) / entry_price) * 100.0
                     )
 
-                # Hard safety cap only when agent manages exits; TP/SL-only trusts UI SL% as-is
-                # (so a wider UI SL for volatile pairs is not silently capped). The cap is an ROI
-                # figure, so it does not apply to the price-denominated ATR stop.
-                if agent_manage_exits and not atr_stop_active:
-                    hard_max_loss_cap_percent = float(trading_settings.get("hard_max_loss_cap_percent", 8.0) or 8.0)
-                    if hard_max_loss_cap_percent > 0:
-                        effective_sl_percent = min(float(effective_sl_percent or hard_max_loss_cap_percent), hard_max_loss_cap_percent)
-                
-                # Check stop loss in PERCENTAGE
+                hard_max_loss_cap_percent = float(
+                    trading_settings.get("hard_max_loss_cap_percent")
+                    or ui_sl_percent
+                    or 8.0
+                )
+                effective_roi_sl = min(ui_sl_percent, hard_max_loss_cap_percent) if hard_max_loss_cap_percent > 0 else ui_sl_percent
+
                 sl_breached_percent = False
-                # For long/short: breach when effective loss % is below threshold.
-                logging.info(f"📊 Position {asset} PnL check: ${unrealized_pnl:.2f} ({pnl_percent:.2f}%) | SL threshold: -{effective_sl_percent}% | ROI={roi_percent:.2f}%")
-                if pnl_percent <= -effective_sl_percent:
+                logging.info(
+                    f"📊 Position {asset} PnL check: ${unrealized_pnl:.2f} "
+                    f"(ROI {roi_percent:.2f}%, price {price_move_pct if price_move_pct is not None else 0:.2f}%) | "
+                    f"UI SL -{effective_roi_sl:g}% ROI"
+                    + (
+                        f" | ATR stop -{exit_plan.stop_price_pct:.2f}% price"
+                        if atr_stop_active
+                        else ""
+                    )
+                )
+                if roi_percent <= -effective_roi_sl:
                     sl_breached_percent = True
-                    add_event(f"🛑 STOP LOSS BREACHED (Percentage) for {asset}: {pnl_percent:.2f}% (threshold: -{effective_sl_percent}%). Closing immediately!")
-                    logging.warning(f"🛑 STOP LOSS BREACHED (Percentage) for {asset}: {pnl_percent:.2f}% <= -{effective_sl_percent}%")
-                
-                # Check stop loss in USD (always enforced — resolved from risk_per_trade / stop_loss_usd)
+                    pnl_percent = roi_percent
+                    add_event(
+                        f"🛑 STOP LOSS BREACHED (ROI %) for {asset}: {roi_percent:.2f}% "
+                        f"(threshold: -{effective_roi_sl:g}%). Closing immediately!"
+                    )
+                    logging.warning(
+                        f"🛑 STOP LOSS BREACHED (ROI %) for {asset}: {roi_percent:.2f}% <= -{effective_roi_sl:g}%"
+                    )
+
+                if (
+                    not sl_breached_percent
+                    and atr_stop_active
+                    and price_move_pct is not None
+                    and price_move_pct <= -float(exit_plan.stop_price_pct or 0)
+                ):
+                    sl_breached_percent = True
+                    pnl_percent = price_move_pct
+                    add_event(
+                        f"🛑 STOP LOSS BREACHED (ATR price %) for {asset}: {price_move_pct:.2f}% "
+                        f"(threshold: -{exit_plan.stop_price_pct:.2f}%). Closing immediately!"
+                    )
+
                 sl_breached_usd = False
                 if stop_loss_usd is not None and stop_loss_usd < 0:
                     logging.info(f"📊 Position {asset} USD SL check: ${unrealized_pnl:.2f} vs threshold: ${stop_loss_usd:.2f}")
                     if unrealized_pnl <= stop_loss_usd:
                         sl_breached_usd = True
-                        add_event(f"🛑 STOP LOSS BREACHED (USD) for {asset}: ${unrealized_pnl:.2f} (threshold: ${stop_loss_usd:.2f}). Closing immediately!")
-                        logging.warning(f"🛑 STOP LOSS BREACHED (USD) for {asset}: ${unrealized_pnl:.2f} <= ${stop_loss_usd:.2f}")
-                
+                        add_event(
+                            f"🛑 STOP LOSS BREACHED (USD) for {asset}: ${unrealized_pnl:.2f} "
+                            f"(threshold: ${stop_loss_usd:.2f}). Closing immediately!"
+                        )
+                        logging.warning(
+                            f"🛑 STOP LOSS BREACHED (USD) for {asset}: ${unrealized_pnl:.2f} <= ${stop_loss_usd:.2f}"
+                        )
                 # If stop loss is breached, mark for immediate closure
                 if sl_breached_percent or sl_breached_usd:
                     positions_to_close.append({
@@ -3176,31 +3201,24 @@ def main():
                                         f"🎯 Enforcing configured TP ({active_exit_plan.tp_mode}) for {asset}: {float(tp_price):.4f}"
                                     )
 
-                            # Never yank an ATR stop down to a tight $ distance (chop killer).
+                            # Always pull exchange SL so $ loss at stop ≤ risk_per_trade_usd.
                             try:
                                 max_loss = resolve_max_loss_usd(trading_settings, default=6.0)
-                                exit_src = str(trading_settings.get("exit_mode") or "atr").lower()
                                 capped_sl = tighten_sl_to_max_loss(
                                     current_price,
                                     is_buy,
                                     actual_position_size,
                                     sl_price,
                                     max_loss,
-                                    allow_tighter_than_atr=(exit_src != "atr"),
+                                    allow_tighter_than_atr=True,
                                 )
                                 if capped_sl is not None and (
                                     sl_price is None or abs(float(capped_sl) - float(sl_price or 0)) > 1e-12
                                 ):
-                                    if exit_src == "atr":
-                                        add_event(
-                                            f"🛡️  Keeping wide ATR SL for {asset} at ${float(capped_sl):.4f} "
-                                            f"(risk-sized ≈ ${max_loss:.2f}; not pulling stop to 2%)"
-                                        )
-                                    else:
-                                        add_event(
-                                            f"🛡️  Tightened SL for {asset} to ${float(capped_sl):.4f} "
-                                            f"(max loss ${max_loss:.2f})"
-                                        )
+                                    add_event(
+                                        f"🛡️  SL for {asset} set to ${float(capped_sl):.4f} "
+                                        f"(max loss ${max_loss:.2f})"
+                                    )
                                     sl_price = capped_sl
                             except Exception as e:
                                 logging.debug(f"USD SL tighten skipped for {asset}: {e}")
