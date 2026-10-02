@@ -2058,7 +2058,7 @@ def main():
                     tp_mode = normalize_tp_mode(
                         (tp_plan.tp_mode if tp_plan else None)
                         or trading_settings.get("tp_mode")
-                        or "price_percent"
+                        or "roi_percent"
                     )
                     price_move_pct = None
                     if entry_price and current_price:
@@ -2570,7 +2570,7 @@ def main():
                 tp_mode = normalize_tp_mode(
                     (tp_plan.tp_mode if tp_plan else None)
                     or trading_settings.get("tp_mode")
-                    or "price_percent"
+                    or "roi_percent"
                 )
                 take_profit_usd = None
                 if tp_plan and tp_plan.take_profit_usd is not None:

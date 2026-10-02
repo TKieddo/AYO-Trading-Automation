@@ -224,7 +224,7 @@ export async function GET() {
       enable_stop_loss_orders: true,
       // Volatility-adaptive exits
       exit_mode: "atr",
-      tp_mode: "price_percent",
+      tp_mode: "roi_percent",
       take_profit_usd: null,
       sl_atr_mult: 2.5,
       tp_rr_ratio: 2.0,

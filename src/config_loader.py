@@ -181,7 +181,7 @@ CONFIG = {
     # Volatility-adaptive exits (ATR-based). When enabled, the fixed TP/SL percentages are
     # replaced by distances derived from recent ATR, so the stop sits outside normal noise.
     "exit_mode": _get_env("EXIT_MODE", "atr"),  # "fixed" (legacy TP/SL %) or "atr" — controls STOP
-    "tp_mode": _get_env("TP_MODE", "price_percent"),  # price_percent | roi_percent | usd | atr_rr
+    "tp_mode": _get_env("TP_MODE", "roi_percent"),  # price_percent | roi_percent | usd | atr_rr
     "take_profit_usd": _get_float("TAKE_PROFIT_USD", 12.0),  # Absolute $ profit lock when tp_mode=usd
     "sl_atr_mult": _get_float("SL_ATR_MULT", 2.0),  # Stop distance = SL_ATR_MULT x ATR%
     "tp_rr_ratio": _get_float("TP_RR_RATIO", 2.0),  # Only used when tp_mode=atr_rr

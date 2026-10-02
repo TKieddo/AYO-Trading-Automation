@@ -76,7 +76,7 @@ def align_take_profit_to_risk(settings: Dict[str, Any], reward_multiple: float =
     try:
         from src.utils.volatility_stops import normalize_tp_mode
 
-        tp_mode = normalize_tp_mode(settings.get("tp_mode") or "price_percent")
+        tp_mode = normalize_tp_mode(settings.get("tp_mode") or "roi_percent")
         settings["tp_mode"] = tp_mode
         # User-facing price % and ATR R:R are intentional — never rewrite the %.
         if tp_mode in ("price_percent", "atr_rr"):
@@ -241,7 +241,7 @@ async def get_trading_settings() -> Dict[str, Any]:
                         ),
                         # Volatility-adaptive exits
                         "exit_mode": _coalesce(data.get("exit_mode"), CONFIG.get("exit_mode"), "atr"),
-                        "tp_mode": _coalesce(data.get("tp_mode"), CONFIG.get("tp_mode"), "price_percent"),
+                        "tp_mode": _coalesce(data.get("tp_mode"), CONFIG.get("tp_mode"), "roi_percent"),
                         "take_profit_usd": _coalesce(
                             data.get("take_profit_usd"), CONFIG.get("take_profit_usd"), 12.0
                         ),
@@ -378,7 +378,7 @@ async def get_trading_settings() -> Dict[str, Any]:
         "max_notional_per_position": CONFIG.get("max_notional_per_position"),
         # Volatility-adaptive exits
         "exit_mode": CONFIG.get("exit_mode", "atr"),
-        "tp_mode": CONFIG.get("tp_mode", "price_percent"),
+        "tp_mode": CONFIG.get("tp_mode", "roi_percent"),
         "take_profit_usd": CONFIG.get("take_profit_usd", 12.0),
         "sl_atr_mult": CONFIG.get("sl_atr_mult", 2.0),
         "tp_rr_ratio": CONFIG.get("tp_rr_ratio", 2.0),

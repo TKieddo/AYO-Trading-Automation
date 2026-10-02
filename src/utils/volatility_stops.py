@@ -33,7 +33,7 @@ class ExitPlan:
     target_roi_pct: float       # Same target, expressed as % of margin (0 when usd-only)
     atr_pct: Optional[float]    # ATR% used to derive it (None = fell back to fixed)
     source: str                 # "atr" or "fixed" — describes the STOP only
-    tp_mode: str = "price_percent"  # price_percent | atr_rr | roi_percent | usd
+    tp_mode: str = "roi_percent"  # price_percent | atr_rr | roi_percent | usd
     take_profit_usd: Optional[float] = None  # Absolute $ target when tp_mode=usd
 
     def stop_price(self, entry_price: float, is_long: bool) -> float:
@@ -64,7 +64,7 @@ class ExitPlan:
 
 def normalize_tp_mode(raw: Any) -> str:
     """Canonical take-profit mode string."""
-    mode = str(raw or "price_percent").strip().lower()
+    mode = str(raw or "roi_percent").strip().lower()
     aliases = {
         "atr": "atr_rr",
         "rr": "atr_rr",
@@ -83,7 +83,7 @@ def normalize_tp_mode(raw: Any) -> str:
     }
     mode = aliases.get(mode, mode)
     if mode not in ("atr_rr", "roi_percent", "usd", "price_percent"):
-        return "price_percent"
+        return "roi_percent"
     return mode
 
 
@@ -133,7 +133,7 @@ def build_exit_plan(
     leverage = max(float(leverage or 1.0), 1.0)
     mode = str(trading_settings.get("exit_mode") or CONFIG.get("exit_mode", "fixed")).lower()
     tp_mode = normalize_tp_mode(
-        trading_settings.get("tp_mode") or CONFIG.get("tp_mode") or "price_percent"
+        trading_settings.get("tp_mode") or CONFIG.get("tp_mode") or "roi_percent"
     )
 
     fixed_sl_roi = float(trading_settings.get("stop_loss_percent") or CONFIG.get("stop_loss_percent", 8) or 8)
