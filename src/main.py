@@ -1102,13 +1102,13 @@ def main():
         add_event("⚡ Exit watcher started (TP/SL independent of LLM cycle)")
         while True:
             try:
-                settings = dict(_LIVE_SETTINGS) if _LIVE_SETTINGS else {}
-                if not settings:
-                    try:
-                        settings = await get_trading_settings()
-                        _LIVE_SETTINGS.update(settings)
-                    except Exception:
-                        settings = {}
+                # Re-read DB each poll so UI % / $ / tp_mode changes apply within ~20s.
+                try:
+                    settings = await get_trading_settings()
+                    _LIVE_SETTINGS.clear()
+                    _LIVE_SETTINGS.update(settings)
+                except Exception:
+                    settings = dict(_LIVE_SETTINGS) if _LIVE_SETTINGS else {}
                 exit_check_s = float(
                     CONFIG.get("exit_check_seconds")
                     or settings.get("exit_check_seconds")
