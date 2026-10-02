@@ -47,7 +47,7 @@ interface TradingSettings {
   take_profit_usd: number | null;
   risk_per_trade_usd: number | null;
   risk_per_trade_pct: number;
-  tp_mode: "roi_percent" | "roi_percent" | "usd" | "atr_rr";
+  tp_mode: "price_percent" | "roi_percent" | "usd" | "atr_rr";
   take_profit_strict_enforcement: boolean;
   enable_stop_loss_orders: boolean;
 }
