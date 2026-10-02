@@ -993,6 +993,98 @@ def main():
             logging.error(f"Error closing {asset}: {e}", exc_info=True)
             return False
 
+    async def _mechanical_exit_sweep(settings: dict) -> int:
+        """Fast TP/SL-only pass between LLM cycles. Returns number of positions closed."""
+        closed_n = 0
+        try:
+            if use_multi_exchange and exchange_manager:
+                st = await exchange_manager.get_merged_user_state()
+            else:
+                st = await hyperliquid.get_user_state()
+        except Exception as e:
+            logging.warning(f"Exit sweep state failed: {e}")
+            return 0
+
+        tp_mode = normalize_tp_mode(settings.get("tp_mode") or "roi_percent")
+        tp_pct = float(settings.get("take_profit_percent") or CONFIG.get("take_profit_percent") or 7)
+        max_loss = resolve_max_loss_usd(settings, default=6.0)
+        stop_usd = -abs(max_loss)
+        ui_sl = float(settings.get("stop_loss_percent") or CONFIG.get("stop_loss_percent") or 12)
+        try:
+            tp_usd_f = float(settings.get("take_profit_usd") or 0)
+        except (TypeError, ValueError):
+            tp_usd_f = 0.0
+
+        for pos in st.get("positions") or []:
+            asset = pos.get("symbol") or pos.get("coin")
+            if not asset:
+                continue
+            signed = _safe_float(pos.get("quantity"), 0.0)
+            if signed == 0.0:
+                signed = _safe_float(pos.get("szi"), 0.0)
+            qty = abs(signed)
+            if qty <= 0:
+                continue
+            is_long = signed > 0
+            entry = _safe_float(
+                pos.get("entry_price") or pos.get("entryPx") or pos.get("entryPrice"), 0.0
+            )
+            try:
+                current = _safe_float(await _ex_for(asset).get_current_price(asset), 0.0)
+            except Exception:
+                current = _safe_float(pos.get("current_price") or pos.get("markPrice"), 0.0)
+            upl = _safe_float(
+                pos.get("unrealized_pnl") or pos.get("pnl") or pos.get("unRealizedProfit"), 0.0
+            )
+            if entry > 0 and current > 0:
+                derived = (current - entry) * qty if is_long else (entry - current) * qty
+                # Prefer the more conservative loss / confirm profit with derived when exchange UPL laggy
+                if derived < upl:
+                    upl = derived
+            roi = _compute_position_roi_percent(
+                pos, is_long=is_long, entry_price=entry, current_price=current
+            )
+            price_move = None
+            if entry > 0 and current > 0:
+                price_move = (
+                    ((current - entry) / entry) * 100.0 if is_long
+                    else ((entry - current) / entry) * 100.0
+                )
+
+            reason = None
+            diary = "close_stop_loss"
+            if upl <= stop_usd:
+                reason = f"USD stop ${upl:.2f} <= ${stop_usd:.2f}"
+            elif roi <= -ui_sl:
+                reason = f"ROI stop {roi:.2f}% <= -{ui_sl:g}%"
+            elif tp_mode == "roi_percent" and roi >= tp_pct:
+                reason = f"ROI TP {roi:.2f}% >= {tp_pct:g}%"
+                diary = "close_tp"
+            elif tp_mode == "price_percent" and price_move is not None and price_move >= tp_pct:
+                reason = f"Price TP {price_move:.2f}% >= {tp_pct:g}%"
+                diary = "close_tp"
+            elif tp_mode == "usd" and tp_usd_f > 0 and upl >= tp_usd_f:
+                reason = f"USD TP ${upl:.2f} >= ${tp_usd_f:g}"
+                diary = "close_tp"
+
+            if not reason:
+                continue
+            add_event(f"⚡ FAST EXIT {asset}: {reason}")
+            ok = await _close_position_reduce_only(
+                asset,
+                is_long,
+                qty,
+                reason,
+                entry_price=entry,
+                current_price=current,
+                pnl_usd=upl,
+                pnl_percent=roi,
+                diary_action=diary,
+            )
+            if ok:
+                closed_n += 1
+        return closed_n
+
     async def run_loop():
         """Main trading loop that gathers data, calls the agent, and executes trades."""
         nonlocal invocation_count, initial_account_value
@@ -3379,7 +3471,34 @@ def main():
                     import traceback
                     add_event(f"Execution error {asset}: {e}")
 
-            await asyncio.sleep(get_interval_seconds(args.interval))
+            # LLM / Pair Hunter cadence = INTERVAL (e.g. 15m).
+            # Between cycles, poll TP/SL every EXIT_CHECK_SECONDS so ROI take-profit stays tight.
+            decision_s = get_interval_seconds(
+                str(trading_settings.get("interval") or args.interval or "15m")
+            )
+            exit_check_s = float(
+                CONFIG.get("exit_check_seconds")
+                or trading_settings.get("exit_check_seconds")
+                or 20
+            )
+            exit_check_s = max(5.0, min(exit_check_s, float(decision_s)))
+            add_event(
+                f"⏱️  Next LLM cycle in {decision_s / 60.0:.1f}m — "
+                f"TP/SL fast-check every {exit_check_s:.0f}s"
+            )
+            waited = 0.0
+            while waited < decision_s:
+                chunk = min(exit_check_s, decision_s - waited)
+                await asyncio.sleep(chunk)
+                waited += chunk
+                if waited >= decision_s:
+                    break
+                try:
+                    n_closed = await _mechanical_exit_sweep(trading_settings)
+                    if n_closed:
+                        add_event(f"⚡ Fast exit sweep closed {n_closed} position(s)")
+                except Exception as e:
+                    logging.warning(f"Fast exit sweep error: {e}")
 
     async def handle_diary(request):
         """Return diary entries as JSON or newline-delimited text."""
