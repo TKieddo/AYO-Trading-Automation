@@ -2055,9 +2055,10 @@ def main():
                     sl_hit = False
                     unrealized_pnl = float(pos.get("unrealized_pnl") or pos.get("pnl") or 0 or 0)
                     tp_plan = _EXIT_PLANS.get(asset.upper())
+                    # Prefer LIVE DB/UI tp_mode over stale per-position plan.
                     tp_mode = normalize_tp_mode(
-                        (tp_plan.tp_mode if tp_plan else None)
-                        or trading_settings.get("tp_mode")
+                        trading_settings.get("tp_mode")
+                        or (tp_plan.tp_mode if tp_plan else None)
                         or "roi_percent"
                     )
                     price_move_pct = None
@@ -2567,9 +2568,10 @@ def main():
                 effective_sl_percent = scalping_sl_percent if is_scalping else sl_percent
 
                 tp_plan = _EXIT_PLANS.get(asset.upper())
+                # Prefer LIVE DB/UI tp_mode over stale per-position plan.
                 tp_mode = normalize_tp_mode(
-                    (tp_plan.tp_mode if tp_plan else None)
-                    or trading_settings.get("tp_mode")
+                    trading_settings.get("tp_mode")
+                    or (tp_plan.tp_mode if tp_plan else None)
                     or "roi_percent"
                 )
                 take_profit_usd = None
